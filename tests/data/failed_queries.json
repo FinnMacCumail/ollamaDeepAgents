@@ -1,0 +1,75 @@
+{
+    "failed_queries": [
+        {
+            "query": "Show cables connected to device dmi01-nashua-pdu01",
+            "baseline_error": "Invalid filter: termination_a__device_id",
+            "expected_approach": "two_step_query",
+            "tags": ["relationship", "cable", "device"]
+        },
+        {
+            "query": "Show all Dunder-Mifflin sites with device counts",
+            "baseline_error": "Invalid filter: name__icontains",
+            "expected_approach": "search",
+            "tags": ["search", "pattern", "site"]
+        },
+        {
+            "query": "List interfaces on device with site_id 5",
+            "baseline_error": "Invalid filter: device__site_id",
+            "expected_approach": "two_step_query",
+            "tags": ["relationship", "interface", "site"]
+        },
+        {
+            "query": "Find all power outlets in rack R01",
+            "baseline_error": "Invalid filter: device__rack__name",
+            "expected_approach": "multi_step_query",
+            "tags": ["relationship", "power", "rack"]
+        },
+        {
+            "query": "Get VLANs in site with name containing 'prod'",
+            "baseline_error": "Invalid filter: site__name__icontains",
+            "expected_approach": "search_then_filter",
+            "tags": ["search", "pattern", "vlan"]
+        },
+        {
+            "query": "Show IP addresses for interfaces on router01",
+            "baseline_error": "Invalid filter: interface__device__name",
+            "expected_approach": "three_step_query",
+            "tags": ["relationship", "ip", "interface", "device"]
+        },
+        {
+            "query": "List circuits terminating at site NYC-DC1",
+            "baseline_error": "Invalid filter: termination_a__site_id",
+            "expected_approach": "two_step_query",
+            "tags": ["relationship", "circuit", "site"]
+        },
+        {
+            "query": "Find devices in racks starting with 'A'",
+            "baseline_error": "Invalid filter: rack__name__startswith",
+            "expected_approach": "search_racks_then_devices",
+            "tags": ["search", "pattern", "rack", "device"]
+        },
+        {
+            "query": "Show virtual machines on host server01",
+            "baseline_error": "Invalid filter: host__name",
+            "expected_approach": "two_step_query",
+            "tags": ["relationship", "vm", "host"]
+        },
+        {
+            "query": "Get prefixes in VRF named 'production'",
+            "baseline_error": "Invalid filter: vrf__name",
+            "expected_approach": "two_step_query",
+            "tags": ["relationship", "prefix", "vrf"]
+        }
+    ],
+    "test_metadata": {
+        "baseline_success_rate": 0.714,
+        "target_success_rate": 0.85,
+        "stretch_success_rate": 0.95,
+        "total_queries": 10,
+        "categories": {
+            "relationship_filters": 7,
+            "pattern_matching": 3,
+            "multi_hop": 4
+        }
+    }
+}
