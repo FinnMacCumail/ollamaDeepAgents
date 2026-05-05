@@ -40,6 +40,9 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
             r"device__site": "relationship_filter",
             r"interface__device": "relationship_filter",
             r"MCP Filter Error": "mcp_validation_error",
+            # NetBox returns 400 when a relational filter receives a display name
+            # instead of a slug or numeric *_id (e.g. site=DM-Akron vs site=dm-akron).
+            r"400 Client Error: Bad Request": "relational_value_error",
         }
 
         # Track recovery attempts to avoid infinite loops
@@ -132,6 +135,9 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
             r"Invalid filter:\s*([^\s,]+)",
             r"filter['\"]:\s*['\"]([^'\"]+)",
             r"(\w+__\w+(?:__\w+)*)",
+            # 400 Bad Request from NetBox: pull the offending querystring,
+            # e.g. ".../api/dcim/racks/?name=Comms+closet&site=DM-Akron&..."
+            r"\?([^\s'\"]+)",
         ]
 
         for pattern in patterns:
@@ -208,6 +214,27 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
                     f"Only exact matches are supported for field '{field}'. "
                     f"Remove the lookup suffix and use exact values."
                 )
+
+        elif error_type == "relational_value_error":
+            # NetBox returned 400 — most often a relational filter received a display
+            # name where it needs a slug or numeric ID. Steer toward the two-step pattern.
+            strategy["approach"] = "two_step_query"
+            strategy["steps"] = [
+                {
+                    "description": "Look up the related object by name to get its ID",
+                    "example": "netbox_get_objects('dcim.site', filters={'name': '<Display Name>'}, fields=['id', 'slug'])",
+                },
+                {
+                    "description": "Re-issue the original query using the numeric *_id",
+                    "example": "netbox_get_objects('<target_type>', filters={'<related>_id': <id>, ...}, fields=[...])",
+                },
+            ]
+            strategy["explanation"] = (
+                "NetBox rejected the request (HTTP 400). Relational filters (site, device, "
+                "rack, tenant, region, provider, cluster, ...) accept a numeric *_id or a "
+                "lowercase slug — never a display name. Run a two-step query: resolve the "
+                "name to an ID first, then filter by that ID."
+            )
 
         elif error_type == "mcp_validation_error":
             # Generic MCP validation error

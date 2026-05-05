@@ -2,9 +2,11 @@
 
 import asyncio
 import time
+import uuid
 from collections.abc import AsyncGenerator
 
 from deepagents import create_deep_agent
+from langgraph.checkpoint.memory import InMemorySaver
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware, TokenOptimizationMiddleware
@@ -17,15 +19,72 @@ from .llamacpp_config import create_llamacpp_model
 logger = get_logger(__name__)
 
 # System prompt for the NetBox agent
-NETBOX_SYSTEM_PROMPT = """You are a NetBox infrastructure query assistant powered by DeepAgents.
+NETBOX_SYSTEM_PROMPT = """You are a NetBox infrastructure assistant with semantic understanding of network relationships.
 
-Your role is to help users query and understand their NetBox infrastructure data efficiently.
+## CRITICAL OPTIMIZATION RULES:
+1. ALWAYS use the 'fields' parameter to minimize token usage (90% reduction possible)
+2. NEVER request all fields unless explicitly asked for complete objects
+3. Start with 'brief=true' for overview queries, then drill down with specific fields
+4. Use 'netbox_search_objects' for global queries when object type is unknown
+5. Use 'netbox_get_objects' when you know the specific object type
 
-CRITICAL CONSTRAINTS for NetBox MCP filters:
-- NEVER use multi-hop filters with double underscores for relationships (e.g., device__site_id)
+## COMMON FIELD PATTERNS:
+- Devices: fields=['id', 'name', 'status', 'device_type', 'site', 'primary_ip4']
+- IP Addresses: fields=['id', 'address', 'status', 'dns_name', 'description', 'vrf']
+- Sites: fields=['id', 'name', 'status', 'region', 'description', 'facility']
+- Interfaces: fields=['id', 'name', 'type', 'enabled', 'device']
+- VLANs: fields=['id', 'vid', 'name', 'status', 'site', 'description']
+- Racks: fields=['id', 'name', 'site', 'status', 'u_height', 'facility_id']
+- Circuits: fields=['id', 'cid', 'provider', 'type', 'status', 'description']
+- Virtual Machines: fields=['id', 'name', 'status', 'cluster', 'vcpus', 'memory']
+
+## QUERY OPTIMIZATION WORKFLOW:
+1. Analyze user question to determine required data
+2. Select minimal field set that answers the question
+3. Use pagination (limit/offset) for large datasets
+4. Leverage ordering to get most relevant results first
+5. For counting: use fields=['id'] only
+
+## SEMANTIC INFRASTRUCTURE UNDERSTANDING:
+- Understand NetBox object relationships: Device → Site → Region
+- Interface → Device, IP Address → Interface → Device
+- VLAN → Site, Circuit → Provider
+- Use two-step queries for cross-relationship filtering
+- Remember: Multi-hop filters like 'device__site_id' are NOT supported
+
+## RELATIONAL FILTER VALUES (CRITICAL — READ TWICE):
+When filtering by a related object (site, device, rack, tenant, region, provider, cluster, etc.),
+the value MUST be either a numeric ID or a lowercase slug — NEVER a display name.
+
+YOU MUST NEVER INVENT, GUESS, OR ASSUME A NUMERIC ID.
+- IDs you have not seen returned by a previous tool call DO NOT EXIST to you.
+- Guessing an ID like `site_id: 5` without looking it up is a CRITICAL ERROR — it may
+  syntactically succeed but return data for a completely different object (silent wrong answer).
+- The only IDs you may use in a filter are IDs that appeared in a prior tool result in this
+  conversation, or that the user gave you explicitly.
+
+MANDATORY two-step pattern (whenever the user gives you a display name, not an ID):
+  Step 1 — REQUIRED FIRST TOOL CALL: resolve the name to an ID
+    netbox_get_objects('dcim.site', filters={'name': 'DM-Akron'}, fields=['id', 'slug'])
+    → read the returned id (e.g. 7)
+  Step 2 — only after Step 1 returns: use that id
+    netbox_get_objects('dcim.rack', filters={'site_id': 7, 'name': 'Comms closet'}, fields=[...])
+
+If a name lookup in Step 1 returns zero results, STOP and tell the user the name was not found.
+Do NOT proceed to Step 2 with a guessed id.
+
+WRONG: filters={'site': 'DM-Akron'}              # display name → 400 error
+WRONG: filters={'site_id': 5}  # without first looking up DM-Akron's id
+RIGHT: filters={'site_id': <id returned by Step 1>}
+RIGHT: filters={'site': 'dm-akron'}              # lowercase slug — only if you already know the slug
+
+## FILTER CONSTRAINTS:
+- NEVER use multi-hop filters with double underscores (e.g., device__site_id)
 - NEVER use Django ORM lookups (e.g., __icontains, __in, __startswith)
-- ALWAYS use two-step queries when filtering by related objects
 - ALWAYS check the netbox-mcp-filters skill for filter guidance
+- Direct ID filters always work: {"device_id": 123}
+- Exact name matches work: {"name": "exact-name"}
+- For partial matches, use netbox_search_objects(query="pattern")
 
 When encountering filter errors:
 1. Identify the problematic filter pattern
@@ -34,17 +93,14 @@ When encountering filter errors:
    - Second: Use the object's ID in a simple filter
 3. Use netbox_search_objects for pattern matching instead of complex filters
 
-Query Patterns:
-- Direct ID filters always work: {"device_id": 123}
-- Exact name matches work: {"name": "exact-name"}
-- For partial matches, use search: netbox_search_objects(query="pattern")
-- For relationships, use two-step queries
+## OUTPUT FORMATTING:
+- Present results as concise markdown tables
+- Highlight key information relevant to user's question
+- Include summary statistics when appropriate
+- For large result sets, show sample + summary (e.g., 'Showing 10 of 247 total')
+- Always mention if results are paginated and how to get more
 
-Remember to:
-- Provide clear, concise responses
-- Show relevant data fields
-- Explain any workarounds used
-- Suggest optimizations when applicable
+Your goal: Provide accurate, efficient answers using minimal tokens while maintaining clarity.
 """
 
 
@@ -85,6 +141,10 @@ class NetBoxDeepAgent:
         self.agent = None
         self.mcp_client = None
         self.tool_wrapper = None
+        # Conversation memory: one checkpointer for the agent, one rolling thread_id.
+        # Each query in this thread sees prior turns; new_conversation() rotates the id.
+        self.checkpointer = InMemorySaver()
+        self.thread_id = uuid.uuid4().hex
 
     async def initialize(self) -> None:
         """Initialize the agent and all components."""
@@ -149,6 +209,7 @@ class NetBoxDeepAgent:
             system_prompt=NETBOX_SYSTEM_PROMPT,
             middleware=middleware,
             skills=self.skills_path,  # Load skills from directory
+            checkpointer=self.checkpointer,
         )
         print("DEBUG: DeepAgent created successfully!", flush=True)
 
@@ -161,12 +222,16 @@ class NetBoxDeepAgent:
         )
         print("DEBUG: Agent fully initialized!", flush=True)
 
-    async def query(self, user_query: str) -> AsyncGenerator[str, None]:
+    async def query(
+        self, user_query: str, thread_id: str | None = None
+    ) -> AsyncGenerator[str, None]:
         """
         Execute a query and stream the response.
 
         Args:
             user_query: Natural language query from user
+            thread_id: Override the conversation thread (defaults to self.thread_id,
+                which preserves history across calls until new_conversation() is called)
 
         Yields:
             Response chunks as they're generated
@@ -177,10 +242,14 @@ class NetBoxDeepAgent:
         logger.info("Processing query", query=user_query[:100])
         start_time = time.time()
 
+        config = {"configurable": {"thread_id": thread_id or self.thread_id}}
+
         try:
             # Stream the agent response
             async for chunk in self.agent.astream(
-                {"messages": [{"role": "user", "content": user_query}]}, stream_mode="values"
+                {"messages": [{"role": "user", "content": user_query}]},
+                config=config,
+                stream_mode="values",
             ):
                 if "messages" in chunk and chunk["messages"]:
                     last_msg = chunk["messages"][-1]
@@ -228,24 +297,35 @@ class NetBoxDeepAgent:
                 self.metrics.total_queries += 1
                 self.metrics.response_times.append(time.time() - start_time)
 
-    async def query_sync(self, user_query: str) -> str:
+    async def query_sync(self, user_query: str, thread_id: str | None = None) -> str:
         """
         Execute a query synchronously (waits for full response).
 
         Args:
             user_query: Natural language query from user
+            thread_id: Optional override for the conversation thread
 
         Returns:
             Complete response as a single string
         """
         response_parts = []
-        async for chunk in self.query(user_query):
+        async for chunk in self.query(user_query, thread_id=thread_id):
             response_parts.append(chunk)
         return "".join(response_parts)
 
+    def new_conversation(self) -> str:
+        """Start a fresh conversation thread, discarding prior history.
+
+        Returns the new thread_id.
+        """
+        self.thread_id = uuid.uuid4().hex
+        logger.info("Started new conversation", thread_id=self.thread_id)
+        return self.thread_id
+
     async def batch_query(self, queries: list[str]) -> dict[str, str]:
         """
-        Execute multiple queries in sequence.
+        Execute multiple queries in sequence, each in its own thread so
+        unrelated queries do not share conversation context.
 
         Args:
             queries: List of queries to execute
@@ -256,7 +336,8 @@ class NetBoxDeepAgent:
         results = {}
         for query in queries:
             try:
-                response = await self.query_sync(query)
+                # Independent thread per batch query
+                response = await self.query_sync(query, thread_id=uuid.uuid4().hex)
                 results[query] = response
             except Exception as e:
                 results[query] = f"Error: {str(e)}"

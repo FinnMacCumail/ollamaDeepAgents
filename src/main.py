@@ -51,6 +51,7 @@ def print_help():
 - **help** - Show this help message
 - **metrics** - Display performance metrics
 - **clear** - Clear the screen
+- **new** - Start a fresh conversation (forget previous turns)
 - **exit/quit** - Exit the application
 
 ## Tips:
@@ -120,6 +121,11 @@ async def interactive_mode(agent):
             elif query.lower() == "clear":
                 console.clear()
                 print_welcome()
+                continue
+
+            elif query.lower() == "new":
+                tid = agent.new_conversation()
+                console.print(f"[green]Started a new conversation (thread: {tid[:8]}...)[/green]")
                 continue
 
             # Process the NetBox query

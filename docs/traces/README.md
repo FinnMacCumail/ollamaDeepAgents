@@ -19,6 +19,12 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-05
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-05_019df7bd_rack-elevation-comparison.md](2026-05-05_019df7bd_rack-elevation-comparison.md) | `019df7bd-ed28-78f0-91f9-7692f8ab13cb` | Rack elevation | 67.1s | DeepAgents vs Claude SDK comparison |
+
 ### 2026-05-04
 
 | File | Trace ID | Query | Duration | Description |
@@ -27,6 +33,16 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### DeepAgents vs Claude SDK (2026-05-05)
+**Query:** Rack elevation display
+- **Performance:** Claude SDK is 6-7x faster (10s vs 67s)
+- **Quality:** Claude SDK has superior formatting and ASCII visualization
+- **Trade-offs:**
+  - DeepAgents: 100% local, $0 cost, full privacy
+  - Claude SDK: Fast, excellent UX, cloud-based
+- **Recommendation:** Use case dependent - privacy vs speed
+- **File:** `2026-05-05_019df7bd_rack-elevation-comparison.md`
 
 ### Streaming Output Fix (2026-05-04)
 - **Problem:** `stream_mode="values"` yielded 7+ chunks including raw JSON

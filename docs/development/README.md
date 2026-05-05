@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-05-05: Claude SDK Comparison](2026-05-05_claude-sdk-comparison.md)
+**Analysis:** Comparing Claude SDK implementation with DeepAgents
+**Key findings:**
+- Claude SDK has more comprehensive system prompt with field optimization
+- Better output formatting guidelines (tables, ASCII art)
+- Evidence suggests netbox-mcp-filters skill not yet triggered in traces
+**Recommendations:** Adopt Claude SDK's system prompt patterns
+
 ### [2026-05-04: Streaming Fix](2026-05-04_streaming-fix.md)
 **Problem:** Messy output with 7+ chunks for simple queries
 **Solution:** Filter streaming to only yield final AI responses
@@ -46,6 +54,7 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-05-05 | Claude SDK comparison | [2026-05-05_claude-sdk-comparison.md](2026-05-05_claude-sdk-comparison.md) |
 | 2026-05-04 | Streaming output fix | [2026-05-04_streaming-fix.md](2026-05-04_streaming-fix.md) |
 | 2026-02-09 | Tool wrapper & model testing | [2026-02-09_session-summary.md](2026-02-09_session-summary.md) |
 | Initial | Project planning | [initial-planning.md](initial-planning.md) |
