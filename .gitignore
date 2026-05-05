@@ -55,10 +55,10 @@ Thumbs.db
 temp/
 tmp/
 
-# Debugging files
-debug_streaming.py
-test_mcp_connection.py
-
 # Type checking and linting caches
 .mypy_cache/
 .ruff_cache/
+
+# LangSmith traces (if downloaded locally)
+langsmith-traces/
+trace_analysis_report.md

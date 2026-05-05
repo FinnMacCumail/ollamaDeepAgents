@@ -12,6 +12,7 @@ from ..tools.netbox_tools import NetBoxToolWrapper, create_netbox_mcp_client
 from ..utils.config import NetBoxConfig, QueryMetrics, load_config
 from ..utils.logging import get_logger
 from .ollama_config import create_ollama_model
+from .llamacpp_config import create_llamacpp_model
 
 logger = get_logger(__name__)
 
@@ -61,20 +62,25 @@ class NetBoxDeepAgent:
         model_name: str | None = None,
         skills_path: str = "src/skills",
         enable_metrics: bool = True,
+        backend: str | None = None,
     ):
         """
         Initialize the NetBox DeepAgent.
 
         Args:
             netbox_config: NetBox configuration (loads from env if not provided)
-            model_name: Ollama model name to use
+            model_name: Model name to use (Ollama or GGUF filename)
             skills_path: Path to skills directory
             enable_metrics: Whether to enable metrics tracking
+            backend: LLM backend to use ("ollama" or "llamacpp", defaults to env var or "ollama")
         """
+        import os
+
         self.netbox_config = netbox_config
         self.model_name = model_name
         self.skills_path = skills_path
         self.enable_metrics = enable_metrics
+        self.backend = backend or os.getenv("LLM_BACKEND", "ollama")
         self.metrics = QueryMetrics() if enable_metrics else None
         self.agent = None
         self.mcp_client = None
@@ -111,10 +117,14 @@ class NetBoxDeepAgent:
         tools = await self.tool_wrapper.get_tools()
         print(f"DEBUG: Got {len(tools)} tools", flush=True)
 
-        # Create Ollama model
-        print("DEBUG: Creating Ollama model...", flush=True)
-        model = create_ollama_model(self.model_name)
-        print("DEBUG: Ollama model created", flush=True)
+        # Create LLM model based on backend
+        print(f"DEBUG: Creating {self.backend} model...", flush=True)
+        if self.backend == "llamacpp":
+            model = create_llamacpp_model(self.model_name)
+            print(f"DEBUG: llama.cpp model created: {self.model_name}", flush=True)
+        else:
+            model = create_ollama_model(self.model_name)
+            print(f"DEBUG: Ollama model created: {self.model_name}", flush=True)
 
         # Build middleware stack
         middleware = []
@@ -144,6 +154,7 @@ class NetBoxDeepAgent:
 
         logger.info(
             "NetBox DeepAgent initialized",
+            backend=self.backend,
             model=self.model_name,
             netbox_url=self.netbox_config.url,
             skills_path=self.skills_path,
@@ -173,7 +184,17 @@ class NetBoxDeepAgent:
             ):
                 if "messages" in chunk and chunk["messages"]:
                     last_msg = chunk["messages"][-1]
-                    if hasattr(last_msg, "content"):
+
+                    # Only yield final AI responses, filter out:
+                    # - HumanMessage (user query echoes)
+                    # - ToolMessage (raw JSON from NetBox MCP)
+                    # - AIMessage with tool_calls but no content
+                    # - Empty messages
+                    if (hasattr(last_msg, "type") and
+                        last_msg.type == "ai" and
+                        hasattr(last_msg, "content") and
+                        last_msg.content and
+                        not getattr(last_msg, "tool_calls", None)):
                         yield last_msg.content
 
             # Track successful query
@@ -266,15 +287,17 @@ async def create_netbox_agent(
     model_name: str | None = None,
     skills_path: str = "src/skills",
     enable_metrics: bool = True,
+    backend: str | None = None,
 ) -> NetBoxDeepAgent:
     """
     Create and initialize a NetBox DeepAgent.
 
     Args:
         netbox_config: NetBox configuration
-        model_name: Ollama model to use
+        model_name: Model name to use (Ollama or GGUF filename)
         skills_path: Path to skills directory
         enable_metrics: Whether to enable metrics
+        backend: LLM backend to use ("ollama" or "llamacpp")
 
     Returns:
         Initialized NetBoxDeepAgent
@@ -284,6 +307,7 @@ async def create_netbox_agent(
         model_name=model_name,
         skills_path=skills_path,
         enable_metrics=enable_metrics,
+        backend=backend,
     )
     await agent.initialize()
     return agent

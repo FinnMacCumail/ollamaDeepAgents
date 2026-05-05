@@ -235,9 +235,17 @@ ollama serve  # Start if needed
 
 ## 📚 Documentation
 
-- [Architecture Overview](docs/architecture.md)
-- [MCP Constraints Detail](docs/mcp-constraints.md)
-- [Ollama Model Comparison](docs/ollama-models.md)
+### Core Documentation
+- [Documentation Index](docs/README.md) - Complete documentation overview
+- [Setup Guides](docs/setup/) - Installation and configuration
+- [Reference Documentation](docs/reference/) - Technical details
+
+### Quick Links
+- [Architecture Overview](docs/reference/architecture.md)
+- [MCP Constraints Detail](docs/reference/mcp-constraints.md)
+- [Ollama Model Comparison](docs/reference/ollama-models.md)
+- [llama.cpp Setup](docs/setup/llamacpp.md)
+- [LangSmith Tracing](docs/setup/langsmith.md)
 - [Skills Development](src/skills/README.md)
 
 ## 🤝 Contributing

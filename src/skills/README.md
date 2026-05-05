@@ -29,6 +29,18 @@ This skill helps the agent:
 - Choose between filters and search appropriately
 - Recover from filter errors gracefully
 
+### trace-analysis
+**Priority**: Medium
+**Trigger**: Analyzing traces, trace analysis, LangSmith trace
+**Purpose**: Structured workflow for analyzing LangSmith traces and saving reports
+
+This skill helps the agent:
+- Fetch and analyze LangSmith traces systematically
+- Save analysis reports to `docs/traces/` with consistent naming
+- Compare traces (before/after, different configurations)
+- Track performance patterns and optimizations over time
+- Build institutional knowledge about agent behavior
+
 ## Creating New Skills
 
 To add a new skill:
