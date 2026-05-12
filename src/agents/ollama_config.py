@@ -31,8 +31,9 @@ def create_ollama_model(
     # Use environment variable with fallback
     model = model_name or os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    is_cloud = model.endswith(":cloud")
 
-    logger.info("Creating Ollama model", model=model, base_url=base_url)
+    logger.info("Creating Ollama model", model=model, base_url=base_url, cloud=is_cloud)
 
     # CRITICAL: Use ChatOllama directly, not init_chat_model
     try:
@@ -42,15 +43,17 @@ def create_ollama_model(
             base_url=base_url,
             # validate_model_on_init=validate,  # Note: This parameter might not exist
             options={
-                "num_ctx": 8192,  # Large context window for DeepAgents
-                "num_predict": 2048,  # Max tokens to generate
+                "num_ctx": 32768,  # Large context window — leverage cloud capacity
+                "num_predict": 4096,  # Max tokens to generate
                 "top_k": 10,
                 "top_p": 0.95,
             },
         )
 
-        # Test the model if validation is requested
-        if validate:
+        # Skip the warm-up probe for :cloud models — it would be a billable round-trip
+        # to ollama.com on every process start. The first real query surfaces any
+        # auth/quota/network issue clearly enough.
+        if validate and not is_cloud:
             try:
                 _ = llm.invoke("test")
                 logger.info("Model validated successfully", model=model)
@@ -64,7 +67,12 @@ def create_ollama_model(
     except Exception as e:
         logger.error("Failed to create model", model=model, error=str(e))
 
-        # Fallback to lighter model on error
+        # For cloud models, never silently fall back to a local model — the user
+        # asked for the cloud model and needs to see the real error (auth, quota, etc.).
+        if is_cloud:
+            raise RuntimeError(f"Failed to create Ollama cloud model {model}: {e}") from e
+
+        # Fallback to lighter local model on error
         if model != "mixtral:8x7b":
             logger.info("Attempting fallback to mixtral:8x7b")
             return create_ollama_model("mixtral:8x7b", temperature, False)

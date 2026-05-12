@@ -32,13 +32,21 @@ Edit `.env` with your settings:
 
 Choose one:
 
-**Option A: llama.cpp (Recommended)**
+**Option A: Ollama Cloud (Best quality, easiest setup — paid subscription)**
+```bash
+ollama signin                                  # one-time browser auth
+ollama run deepseek-v4-pro:cloud "say hello"   # smoke-test
+# Set LLM_BACKEND=ollama and OLLAMA_MODEL=deepseek-v4-pro:cloud in .env.
+# See ollama-cloud.md for full details.
+```
+
+**Option B: llama.cpp (Best privacy — fully local)**
 ```bash
 # Start llama.cpp server (see llamacpp.md for details)
 ./llama-server --model models/Qwen_Qwen3-14B-Q5_K_M.gguf --port 58123
 ```
 
-**Option B: Ollama**
+**Option C: Local Ollama**
 ```bash
 # Start Ollama (see Ollama documentation)
 ollama serve
@@ -54,6 +62,11 @@ python -m src.main
 ## Configuration Guides
 
 ### Core Configuration
+
+- **[Ollama Cloud Setup](ollama-cloud.md)** - Use frontier models (e.g. `deepseek-v4-pro:cloud`) via Ollama Cloud
+  - Subscription requirements
+  - Sign-in and `.env` configuration
+  - Switching back to local
 
 - **[llama.cpp Setup](llamacpp.md)** - Configure local GGUF models with llama.cpp
   - Model selection and download
@@ -75,24 +88,24 @@ python -m src.main
 
 ## Common Configurations
 
-### Development Setup (Fast Iteration)
+### Best Quality (Cloud — paid)
 ```env
-LLM_BACKEND=llamacpp
-LLAMACPP_MODEL=Qwen_Qwen3-14B-Q5_K_M.gguf  # 14B for good quality
+LLM_BACKEND=ollama
+OLLAMA_MODEL=deepseek-v4-pro:cloud          # Frontier MoE via Ollama Cloud
 LANGCHAIN_TRACING_V2=true                   # Enable tracing
 ```
 
-### Production Setup (Best Quality)
+### Best Privacy (Fully Local — llama.cpp)
 ```env
 LLM_BACKEND=llamacpp
-LLAMACPP_MODEL=Qwen_Qwen3-14B-Q5_K_M.gguf  # Or larger model
-LANGCHAIN_TRACING_V2=false                  # Disable for performance
+LLAMACPP_MODEL=Qwen_Qwen3-14B-Q5_K_M.gguf   # 14B for good local quality
+LANGCHAIN_TRACING_V2=true
 ```
 
 ### Testing Setup (Fast, Minimal)
 ```env
 LLM_BACKEND=ollama
-OLLAMA_MODEL=qwen2.5:7b                     # Smaller, faster
+OLLAMA_MODEL=qwen2.5:7b                     # Smaller, faster, local
 LANGCHAIN_TRACING_V2=true                   # Enable for debugging
 ```
 
