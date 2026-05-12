@@ -19,6 +19,13 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-12
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-12_019e1c4e_multi-aspect-deepseek-cloud.md](2026-05-12_019e1c4e_multi-aspect-deepseek-cloud.md) | `019e1c4e-87c7-7b53-88fa-f87a5275e142` | Multi-aspect tenant query (Dunder-Mifflin sites + devices + racks + prefixes) | 227s | Query that twice defeated the local 14B now completes; 3-way parallel tool batch; filter-semantics gotcha (`tenant_id` vs `site_id`) undercounts patch-panel devices |
+| [2026-05-12_019e1c19_rack-elevation-deepseek-cloud.md](2026-05-12_019e1c19_rack-elevation-deepseek-cloud.md) | `019e1c19-f6c5-7480-8e1b-28c03578de33` | Rack elevation | 244s | First run on `deepseek-v4-pro:cloud` after backend switch — 3-way comparison vs local 14B and Claude SDK |
+
 ### 2026-05-05
 
 | File | Trace ID | Query | Duration | Description |
@@ -33,6 +40,24 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Multi-aspect tenant query on deepseek-v4-pro:cloud (2026-05-12)
+**Query:** Show all Dunder Mifflin sites with device counts, rack allocations, and IP prefix assignments
+- **Outcome:** Query that twice defeated the local 14B (empty answer + 400 crash) now completes cleanly with a 14-site table
+- **Decomposition:** Two-step tenant lookup, then a 3-way parallel tool batch (devices + racks + prefixes) — capability not seen on the 14B
+- **Correctness gap:** Reports 39 devices vs Claude SDK's 42; `tenant_id` filter quietly drops patch panels that lack explicit tenant assignment but inherit it via rack
+- **Cost:** 227s wall time, 5 LLM calls, 6 tool calls (one redundant `ipam.prefix` re-fetch wasted ~40s)
+- **Open issue:** `skills_metadata: []` again — netbox-mcp-filters skill (which would have steered toward the correct filter path) still not loading
+- **File:** `2026-05-12_019e1c4e_multi-aspect-deepseek-cloud.md`
+
+### deepseek-v4-pro:cloud first run (2026-05-12)
+**Query:** Rack elevation display (same as 2026-05-05 baseline)
+- **Quality:** Cloud frontier model is the only run of three to render a true rack elevation; correctly handles the multi-U patch panel (Claude SDK got it wrong)
+- **Performance:** ~244s wall time — slower than both local 14B (~32s) and Claude SDK (~10s); 96s spent on the final formatting call alone
+- **Tool calling:** Two parallel tool batches (2-way and 4-way) — capability not exhibited by the local 14B
+- **Architectural validation:** Two-step pattern, field projection, memory all carry over unchanged from local stack
+- **Open issue:** `skills_metadata` still empty despite the `title:` → `name:` fix in commit `63f1fb3`
+- **File:** `2026-05-12_019e1c19_rack-elevation-deepseek-cloud.md`
 
 ### DeepAgents vs Claude SDK (2026-05-05)
 **Query:** Rack elevation display
