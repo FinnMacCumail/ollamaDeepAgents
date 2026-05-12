@@ -237,7 +237,9 @@ class NetBoxDeepAgent:
             tools=tools,
             system_prompt=NETBOX_SYSTEM_PROMPT,
             middleware=middleware,
-            skills=self.skills_path,  # Load skills from directory
+            # DeepAgents expects skills as list[str]; a bare string iterates char-by-char
+            # and silently loads zero skills.
+            skills=[self.skills_path],
             checkpointer=self.checkpointer,
         )
         for w in skill_warnings.records:
