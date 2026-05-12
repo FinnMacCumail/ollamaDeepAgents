@@ -1,15 +1,74 @@
 ---
-title: NetBox MCP Filter Constraints
-description: Critical knowledge for successful NetBox queries via MCP
+name: netbox-mcp-filters
+description: Critical knowledge for successful NetBox queries via MCP — filter constraints, two-step query patterns, pagination handling, and multi-aspect query decomposition. Load this skill whenever building a NetBox query that involves filtering by relationships, paginated result sets, or composing multi-part queries (e.g. "show X with Y and Z").
 version: 1.0.0
-tags: [netbox, mcp, filters, constraints, recovery]
+tags: [netbox, mcp, filters, constraints, recovery, pagination, decomposition]
 priority: high
-trigger: netbox queries with filtering
 ---
 
 # NetBox MCP Filter Constraints
 
 This skill provides essential knowledge about NetBox MCP server filter limitations and how to work around them. Following these patterns will prevent filter errors and ensure successful queries.
+
+## HANDLING PAGINATED RESPONSES
+
+NetBox returns paginated results. A response shaped like this is INCOMPLETE:
+```json
+{"count": 14, "next": "http://.../?...&offset=5", "previous": null, "results": [<5 items>]}
+```
+
+When `next` is non-null, you have only seen part of the data. You MUST do one of:
+
+1. **Fetch the next page** by re-calling the same tool with `offset=<previous offset + limit>`,
+   accumulating `results` until `next` is null.
+2. **Raise the limit** in the original call (e.g. `limit=200`) so all results return in one
+   page when you know `count` is small enough.
+3. **Tell the user the result is partial** — explicitly state "showing N of M" — but ONLY if
+   the user clearly asked for a sample, or if N is large enough to be useful as-is.
+
+NEVER silently ignore a non-null `next`. Returning 5 of 14 sites without flagging it is a
+correctness failure.
+
+```python
+# Pagination loop pattern
+all_results = []
+offset = 0
+while True:
+    page = netbox_get_objects("dcim.site", filters={"tenant_id": 5}, limit=50, offset=offset)
+    all_results.extend(page["results"])
+    if not page.get("next"):
+        break
+    offset += 50
+```
+
+## DECOMPOSING MULTI-ASPECT QUERIES
+
+When the user asks for one entity *with* multiple related aspects (e.g. "show all sites
+with device counts, rack allocations, and IP prefix assignments"), break it down before
+issuing tool calls:
+
+1. **List the aspects.** Each "with X" or "and Y" is a separate sub-query.
+2. **Identify shared dependencies.** If every aspect needs `site_id`, fetch sites once.
+3. **Check whether the parent object already includes the aspect.** Many NetBox objects
+   carry counts/relations as fields:
+   - Sites include `device_count`, `rack_count`, `prefix_count`, `circuit_count`,
+     `vlan_count` — add them to `fields=[...]` and you are done for that aspect, no extra tool call.
+   - Devices include `interface_count`, `console_port_count`, `power_port_count`, etc.
+   - Racks include `device_count`, `powerfeed_count`.
+4. **Only issue separate tool calls for aspects not on the parent.** For each remaining
+   aspect, do a single `netbox_get_objects(<aspect_type>, filters={<parent>_id__in: ...})`
+   if supported, otherwise loop. Use `fields=[...]` on every call.
+5. **Aggregate, then format.** Build the answer in one pass at the end — do not write
+   partial answers between tool calls.
+
+Example planning for "Show all Dunder Mifflin sites with device counts, rack allocations,
+and IP prefix assignments":
+- Aspect A (devices): `device_count` is a site field → no extra call
+- Aspect B (racks): `rack_count` is a site field; for *which* racks, one call per site or
+  `netbox_get_objects("dcim.rack", filters={"tenant_id": 5}, limit=200)` — usually fewer
+  than 100 racks total, so one call
+- Aspect C (IP prefixes): `netbox_get_objects("ipam.prefix", filters={"tenant_id": 5}, limit=200)`
+- Total: 3-4 tool calls (with pagination), not 14×3=42
 
 ## CRITICAL FILTER LIMITATIONS
 

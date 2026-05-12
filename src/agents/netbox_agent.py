@@ -146,6 +146,32 @@ class NetBoxDeepAgent:
         self.checkpointer = InMemorySaver()
         self.thread_id = uuid.uuid4().hex
 
+    @staticmethod
+    def _capture_skill_warnings():
+        """Attach a list-handler to the deepagents skills logger to catch
+        otherwise-silent warnings (e.g. SKILL.md missing 'name')."""
+        import logging
+
+        sk_logger = logging.getLogger("deepagents.middleware.skills")
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.WARNING)
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.records.append(record)
+
+            def detach(self) -> None:
+                sk_logger.removeHandler(self)
+
+        h = _ListHandler()
+        sk_logger.addHandler(h)
+        # Ensure WARNING propagates even if the root level is higher.
+        if sk_logger.level == 0 or sk_logger.level > logging.WARNING:
+            sk_logger.setLevel(logging.WARNING)
+        return h
+
     async def initialize(self) -> None:
         """Initialize the agent and all components."""
         logger.info("Initializing NetBox DeepAgent")
@@ -203,6 +229,9 @@ class NetBoxDeepAgent:
         # Create the DeepAgent
         # Note: SummarizationMiddleware is added automatically by DeepAgents
         print("DEBUG: Creating DeepAgent...", flush=True)
+        # Capture skill-loader warnings so misconfigured SKILL.md files (missing
+        # required 'name'/'description', bad YAML, etc.) don't get silently skipped.
+        skill_warnings = self._capture_skill_warnings()
         self.agent = create_deep_agent(
             model=model,
             tools=tools,
@@ -211,6 +240,10 @@ class NetBoxDeepAgent:
             skills=self.skills_path,  # Load skills from directory
             checkpointer=self.checkpointer,
         )
+        for w in skill_warnings.records:
+            logger.warning("Skill loader warning", message=w.getMessage())
+            print(f"WARNING: skill loader: {w.getMessage()}", flush=True)
+        skill_warnings.detach()
         print("DEBUG: DeepAgent created successfully!", flush=True)
 
         logger.info(

@@ -1,10 +1,9 @@
 ---
-title: LangSmith Trace Analysis
-description: Analyze LangSmith traces and save reports to docs/traces/
+name: trace-analysis
+description: Analyze LangSmith traces from the netbox-deepagents-llamacpp project and save structured reports to docs/traces/. Load this skill whenever the user asks to inspect, summarize, compare, or debug a LangSmith trace.
 version: 1.0.0
 tags: [langsmith, tracing, analysis, debugging, performance]
 priority: medium
-trigger: analyzing traces, trace analysis, langsmith trace
 ---
 
 # LangSmith Trace Analysis Skill
