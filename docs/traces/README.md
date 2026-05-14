@@ -19,6 +19,12 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-14
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-14_019e1c9f_skills-loaded-multi-aspect.md](2026-05-14_019e1c9f_skills-loaded-multi-aspect.md) | `019e1c9f-64de-77e1-98e1-9668a00a8cfa` | Multi-aspect tenant query (re-run with skills loaded) | **22s** | Breakthrough: first trace with `skills_metadata` populated. Skill steered model toward parent-object count fields → zero tool calls, 10× speedup vs same query without skills |
+
 ### 2026-05-12
 
 | File | Trace ID | Query | Duration | Description |
@@ -40,6 +46,15 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Skills loaded — multi-aspect query (2026-05-14)
+**Query:** Same multi-aspect query as 2026-05-12 baseline, re-run after the FilesystemBackend skill-loader fix
+- **Outcome:** First trace in project history with `skills_metadata` populated — both `netbox-mcp-filters` and `trace-analysis` skills active
+- **Performance:** 22s wall time (vs 227s for the same query without skills) — 10× speedup driven by the skill steering toward NetBox's per-site count fields (`device_count`, `rack_count`, etc.), eliminating the need for additional tool calls
+- **Tool calls:** Zero this turn (memory-enabled session — prior turns cached the data; this turn was pure decode)
+- **Device count:** 52 (read from canonical `device_count` field) — likely the most accurate; supersedes prior 39 (tenant_id undercount) and Claude SDK's 42
+- **Skill influence confirmed:** earlier failed attempts in the same window used `site_id=[1,…,14]` filter form and `limit=200` — both patterns appear nowhere outside the skill content
+- **File:** `2026-05-14_019e1c9f_skills-loaded-multi-aspect.md`
 
 ### Multi-aspect tenant query on deepseek-v4-pro:cloud (2026-05-12)
 **Query:** Show all Dunder Mifflin sites with device counts, rack allocations, and IP prefix assignments
