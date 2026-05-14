@@ -4,9 +4,15 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from deepagents import create_deep_agent
+from deepagents.backends.filesystem import FilesystemBackend
 from langgraph.checkpoint.memory import InMemorySaver
+
+# Project root, computed from this file's location so skills resolve
+# regardless of the process's cwd at runtime.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware, TokenOptimizationMiddleware
@@ -232,6 +238,15 @@ class NetBoxDeepAgent:
         # Capture skill-loader warnings so misconfigured SKILL.md files (missing
         # required 'name'/'description', bad YAML, etc.) don't get silently skipped.
         skill_warnings = self._capture_skill_warnings()
+        # SkillsMiddleware needs a backend that can read skill files from disk.
+        # create_deep_agent defaults to StateBackend (in-memory, expects skills via
+        # invoke(files={...})), which silently loads zero skills for our use case.
+        # FilesystemBackend rooted at the project gives us disk-loaded skills with
+        # virtual_mode=True providing path-based guardrails.
+        skills_backend = FilesystemBackend(
+            root_dir=str(PROJECT_ROOT), virtual_mode=True
+        )
+
         self.agent = create_deep_agent(
             model=model,
             tools=tools,
@@ -240,6 +255,7 @@ class NetBoxDeepAgent:
             # DeepAgents expects skills as list[str]; a bare string iterates char-by-char
             # and silently loads zero skills.
             skills=[self.skills_path],
+            backend=skills_backend,
             checkpointer=self.checkpointer,
         )
         for w in skill_warnings.records:

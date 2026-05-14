@@ -17,12 +17,16 @@ NetBox returns paginated results. A response shaped like this is INCOMPLETE:
 {"count": 14, "next": "http://.../?...&offset=5", "previous": null, "results": [<5 items>]}
 ```
 
+**HARD LIMIT:** the `netbox_get_objects` tool schema caps `limit` at **100**. Passing
+`limit > 100` will fail with a Pydantic validation error before any HTTP request is made.
+Plan around this cap.
+
 When `next` is non-null, you have only seen part of the data. You MUST do one of:
 
 1. **Fetch the next page** by re-calling the same tool with `offset=<previous offset + limit>`,
    accumulating `results` until `next` is null.
-2. **Raise the limit** in the original call (e.g. `limit=200`) so all results return in one
-   page when you know `count` is small enough.
+2. **Raise the limit toward the cap** (e.g. `limit=100`) so all results return in one
+   page when you know `count <= 100`.
 3. **Tell the user the result is partial** — explicitly state "showing N of M" — but ONLY if
    the user clearly asked for a sample, or if N is large enough to be useful as-is.
 
@@ -30,15 +34,16 @@ NEVER silently ignore a non-null `next`. Returning 5 of 14 sites without flaggin
 correctness failure.
 
 ```python
-# Pagination loop pattern
+# Pagination loop pattern (works for any count)
 all_results = []
 offset = 0
+PAGE = 100  # match the tool's max
 while True:
-    page = netbox_get_objects("dcim.site", filters={"tenant_id": 5}, limit=50, offset=offset)
+    page = netbox_get_objects("dcim.site", filters={"tenant_id": 5}, limit=PAGE, offset=offset)
     all_results.extend(page["results"])
     if not page.get("next"):
         break
-    offset += 50
+    offset += PAGE
 ```
 
 ## DECOMPOSING MULTI-ASPECT QUERIES
@@ -64,10 +69,11 @@ issuing tool calls:
 Example planning for "Show all Dunder Mifflin sites with device counts, rack allocations,
 and IP prefix assignments":
 - Aspect A (devices): `device_count` is a site field → no extra call
-- Aspect B (racks): `rack_count` is a site field; for *which* racks, one call per site or
-  `netbox_get_objects("dcim.rack", filters={"tenant_id": 5}, limit=200)` — usually fewer
-  than 100 racks total, so one call
-- Aspect C (IP prefixes): `netbox_get_objects("ipam.prefix", filters={"tenant_id": 5}, limit=200)`
+- Aspect B (racks): `rack_count` is a site field; for *which* racks, one call:
+  `netbox_get_objects("dcim.rack", filters={"tenant_id": 5}, limit=100)` — if the result's
+  `next` is non-null, paginate (see HANDLING PAGINATED RESPONSES above)
+- Aspect C (IP prefixes): `netbox_get_objects("ipam.prefix", filters={"tenant_id": 5}, limit=100)`,
+  paginate if `next` is non-null
 - Total: 3-4 tool calls (with pagination), not 14×3=42
 
 ## CRITICAL FILTER LIMITATIONS
