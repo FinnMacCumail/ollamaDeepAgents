@@ -1,6 +1,16 @@
 # DeepAgents Skills System
 
-This directory contains skills for the NetBox DeepAgents system. Skills provide progressive disclosure of domain-specific knowledge, allowing the agent to load relevant information just-in-time rather than keeping everything in context.
+This directory contains **runtime skills** loaded by the NetBox DeepAgent at startup
+(via `SkillsMiddleware` reading from `src/skills/` through a `FilesystemBackend`). Every
+SKILL.md under this directory becomes part of the deployed agent's available skills.
+
+Developer-workflow skills (used by a Claude Code session helping you work on this
+codebase, NOT by the deployed agent) live separately at `.claude/skills/<name>/SKILL.md`.
+Do not put developer skills here — they will bloat the agent's system prompt and
+potentially influence its planning in ways unrelated to the user's NetBox query.
+
+Skills provide progressive disclosure of domain-specific knowledge, allowing the agent
+to load relevant information just-in-time rather than keeping everything in context.
 
 ## What are Skills?
 
@@ -28,18 +38,8 @@ This skill helps the agent:
 - Use two-step queries for relationships
 - Choose between filters and search appropriately
 - Recover from filter errors gracefully
-
-### trace-analysis
-**Priority**: Medium
-**Trigger**: Analyzing traces, trace analysis, LangSmith trace
-**Purpose**: Structured workflow for analyzing LangSmith traces and saving reports
-
-This skill helps the agent:
-- Fetch and analyze LangSmith traces systematically
-- Save analysis reports to `docs/traces/` with consistent naming
-- Compare traces (before/after, different configurations)
-- Track performance patterns and optimizations over time
-- Build institutional knowledge about agent behavior
+- Handle paginated responses correctly (`limit <= 100` cap)
+- Decompose multi-aspect queries using parent-object count fields
 
 ## Creating New Skills
 
@@ -50,18 +50,20 @@ To add a new skill:
 
 ```markdown
 ---
-title: Your Skill Title
-description: Brief description of what this skill provides
+name: your-skill-name
+description: Brief description of what this skill provides and when the agent should load it
 version: 1.0.0
 tags: [relevant, tags, here]
 priority: high|medium|low
-trigger: when this skill should be activated
 ---
 
 # Skill Content
 
 Detailed instructions and knowledge here...
 ```
+
+**Required:** the Agent Skills spec requires `name` (NOT `title:` — that field is
+ignored, the skill will be silently skipped at load time).
 
 3. Optionally add supporting files (examples.md, patterns.json, etc.)
 

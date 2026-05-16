@@ -53,13 +53,17 @@ Skills are stored in `src/skills/` and provide progressive disclosure of domain 
 - Pattern matching strategies
 - See: `src/skills/netbox-mcp-filters/SKILL.md`
 
-**trace-analysis** (Priority: Medium)
-- LangSmith trace analysis workflow
-- Report generation and organization
-- Performance tracking
-- See: `src/skills/trace-analysis/SKILL.md`
-
 For more on the skills system, see `src/skills/README.md`.
+
+### Developer-only Skills (Claude Code, not runtime)
+
+These live under `.claude/skills/` and are loaded by Claude Code sessions opened
+in this repo. They are NOT loaded by the deployed NetBox agent:
+
+**trace-analysis** (`.claude/skills/trace-analysis/SKILL.md`)
+- LangSmith trace analysis workflow
+- Report generation into `docs/traces/`
+- Used when a developer is interactively analysing agent behaviour
 
 ## API Reference
 

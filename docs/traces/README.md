@@ -103,14 +103,14 @@ YYYY-MM-DD_comparison_<description>.md
 ## How to Add New Reports
 
 1. Fetch trace data using LangSmith CLI or helper scripts
-2. Analyze following the structure in `src/skills/trace-analysis/SKILL.md`
+2. Analyze following the structure in `.claude/skills/trace-analysis/SKILL.md`
 3. Save to this directory using naming convention
 4. Update this README with new entry
 5. Include key findings in summary sections
 
 ## Related Documentation
 
-- **Skill:** [src/skills/trace-analysis/SKILL.md](../../src/skills/trace-analysis/SKILL.md)
+- **Skill (developer-only):** [.claude/skills/trace-analysis/SKILL.md](../../.claude/skills/trace-analysis/SKILL.md) — loaded by Claude Code sessions in this repo, NOT by the runtime agent
 - **Helper Scripts:**
   - [fetch_run_details.py](../../scripts/fetch_run_details.py)
   - [test_clean_output.py](../../tests/manual/test_clean_output.py)

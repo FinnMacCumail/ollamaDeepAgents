@@ -30,7 +30,8 @@ Detailed assessment of LangSmith Skills capabilities:
 
 1. Enable LangSmith tracing (see [Setup](../setup/langsmith.md))
 2. Run your query
-3. Use the trace-analysis skill to analyze results
+3. In a Claude Code session opened in this repo, invoke the `trace-analysis` skill
+   (lives at `.claude/skills/trace-analysis/`) to analyse the resulting trace
 4. Compare traces in [traces/](../traces/)
 
 ### Debugging Failed Queries
