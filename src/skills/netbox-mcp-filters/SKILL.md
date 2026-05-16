@@ -46,6 +46,38 @@ while True:
     offset += PAGE
 ```
 
+## BATCHING MULTIPLE IDs IN A SINGLE CALL
+
+A common need: "I have a known list of IDs, fetch them all in one query." The Django
+ORM idiom for this is `id__in=[1,2,3]`, but **the `__in` lookup suffix is FORBIDDEN**
+by this MCP server (it's a Django-lookup pattern — see CRITICAL FILTER LIMITATIONS
+below). The validator will reject any filter containing `__in` before the request is
+sent.
+
+The correct alternative is to **pass a list as the value of the non-suffixed key**.
+NetBox accepts repeated query parameters as multi-value (`?id=1&id=2&id=3` semantics),
+and the MCP layer serialises a Python list to that form automatically:
+
+```python
+# WRONG — validator rejects (Django lookup)
+netbox_get_objects("dcim.site", filters={"id__in": [1, 2, 3, 14]})
+
+# RIGHT — pass list as value of bare key
+netbox_get_objects("dcim.site", filters={"id": [1, 2, 3, 14]})
+```
+
+Same pattern works for relational *_id keys when you have multiple specific objects:
+
+```python
+# Fetch racks belonging to any of several known sites in one call
+netbox_get_objects("dcim.rack", filters={"site_id": [1, 2, 3]}, fields=[...])
+```
+
+When NOT to batch: if you don't already have the IDs in hand, don't run a separate
+lookup just to collect them — usually it's simpler to fetch the parent set (e.g. all
+sites) and filter client-side, or use a `tenant_id` / `region_id` / similar
+relational filter that covers the group implicitly.
+
 ## DECOMPOSING MULTI-ASPECT QUERIES
 
 When the user asks for one entity *with* multiple related aspects (e.g. "show all sites
