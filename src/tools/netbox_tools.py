@@ -53,17 +53,48 @@ class FilterValidator:
         Returns:
             Suggestion for how to fix the filter
         """
-        if "__" in invalid_filter:
-            parts = invalid_filter.split("__")
-            if len(parts) == 2:
-                if parts[1] in ["icontains", "contains", "startswith"]:
-                    return f"Use netbox_search_objects with query parameter instead of {invalid_filter}"
-                else:
-                    return f"Perform two-step query: 1) Get {parts[0]} by name, 2) Use {parts[0]}_id filter"
-            else:
-                return "Break into multiple queries, fetching intermediate objects first"
+        if "__" not in invalid_filter:
+            return "Use direct ID filters or exact name matches"
 
-        return "Use direct ID filters or exact name matches"
+        parts = invalid_filter.split("__")
+        if len(parts) > 2:
+            return "Break into multiple queries, fetching intermediate objects first"
+
+        field, suffix = parts[0], parts[1]
+
+        # __in lookup: batch by passing a list as the bare-key value
+        if suffix == "in":
+            return (
+                f"Replace '{invalid_filter}' with the bare key and pass the list as its "
+                f"value: filters={{'{field}': [<v1>, <v2>, ...]}}. NetBox accepts "
+                f"repeated query parameters as multi-value (?{field}=1&{field}=2&...)."
+            )
+
+        # Pattern-matching lookups: route to search
+        if suffix in ("icontains", "contains", "startswith", "endswith", "regex", "iregex"):
+            return f"Use netbox_search_objects(query='...') instead of {invalid_filter}"
+
+        # Numeric comparisons: only exact match is supported
+        if suffix in ("gt", "gte", "lt", "lte"):
+            return (
+                f"Comparison suffix '{suffix}' is not supported. Fetch a broader set "
+                f"and filter client-side, or use exact match."
+            )
+
+        # Relationship traversals — only meaningful when the prefix refers to a
+        # related object (not 'id' or numeric prefixes).
+        if field and not field.isdigit() and field != "id":
+            return (
+                f"Perform two-step query: 1) Get {field} by name "
+                f"(netbox_get_objects('dcim.{field}', filters={{'name': '<name>'}})), "
+                f"2) Use the returned id with the {field}_id filter."
+            )
+
+        # Fallback: bare field with unsupported suffix — strip the suffix.
+        return (
+            f"Drop the '__{suffix}' suffix and use the bare key '{field}' with a "
+            f"single value or a list."
+        )
 
 
 class NetBoxToolWrapper:
@@ -108,25 +139,34 @@ class NetBoxToolWrapper:
             if "filters" in kwargs or "filter" in kwargs:
                 filter_param = kwargs.get("filters") or kwargs.get("filter") or {}
 
-                # Validate the filter
+                # Find the first invalid key (validate_filter returns on the first failure)
                 is_valid, error_msg = self.validator.validate_filter(filter_param)
 
                 if not is_valid:
-                    # Log the error
+                    # Identify which key failed so the suggestion is targeted at it
+                    invalid_key = next(
+                        (k for k in filter_param if not self.validator.validate_filter({k: filter_param[k]})[0]),
+                        next(iter(filter_param), ""),
+                    )
+                    suggestion = self.validator.suggest_alternative(invalid_key)
+
                     logger.warning(
-                        "Invalid filter detected",
+                        "Invalid filter detected — returning structured error to model",
+                        tool=tool.name,
                         filter=filter_param,
                         error=error_msg,
                     )
 
-                    # Get suggestion for fixing
-                    suggestion = self.validator.suggest_alternative(list(filter_param.keys())[0])
-
-                    # Raise a descriptive error
-                    raise ValueError(
-                        f"MCP Filter Error: {error_msg}\n"
+                    # Return a structured error STRING instead of raising. langgraph
+                    # treats this as a successful tool result and threads it back into
+                    # the conversation as a ToolMessage, so the model sees the error
+                    # on its next turn and can retry with the suggested correction.
+                    # Raising here instead would crash the entire agent run.
+                    return (
+                        f"TOOL_VALIDATION_ERROR: {error_msg}\n"
                         f"Suggestion: {suggestion}\n"
-                        f"Consult the netbox-mcp-filters skill for guidance."
+                        f"Consult the netbox-mcp-filters skill for guidance. "
+                        f"Reissue this tool call with the corrected filter."
                     )
 
             # If validation passes, call the original function

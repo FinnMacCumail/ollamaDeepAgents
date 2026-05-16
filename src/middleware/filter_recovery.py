@@ -29,16 +29,24 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
         self.logger = logger
         self.metrics = metrics or QueryMetrics()
 
-        # Patterns that indicate filter errors
+        # Patterns that indicate filter errors. Iteration order matters —
+        # _detect_error_type returns the FIRST match, so put more specific
+        # patterns before the generic catch-alls.
         self.error_patterns = {
-            r"Invalid filter.*__": "multi_hop_filter",
+            # Specific Django-lookup suffixes (must come before the generic __ pattern)
             r"Invalid filter.*__icontains": "django_lookup",
             r"Invalid filter.*__contains": "django_lookup",
             r"Invalid filter.*__startswith": "django_lookup",
-            r"Invalid filter.*__in": "django_lookup",
+            r"Invalid filter.*__endswith": "django_lookup",
+            r"Invalid filter.*__in\b": "django_lookup",
+            r"Invalid filter.*__regex": "django_lookup",
+            r"Invalid filter.*__(gt|gte|lt|lte)\b": "django_lookup",
+            # Known relationship-traversal cases
             r"termination_[ab]__device": "relationship_filter",
             r"device__site": "relationship_filter",
             r"interface__device": "relationship_filter",
+            # Generic multi-hop fallback — must come AFTER the specific patterns above
+            r"Invalid filter.*__": "multi_hop_filter",
             r"MCP Filter Error": "mcp_validation_error",
             # NetBox returns 400 when a relational filter receives a display name
             # instead of a slug or numeric *_id (e.g. site=DM-Akron vs site=dm-akron).
@@ -168,29 +176,44 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
         }
 
         if error_type in ["multi_hop_filter", "relationship_filter"]:
-            # Generate two-step query strategy
+            # Generate two-step query strategy. Only meaningful when the prefix
+            # actually refers to a related object — skip "id", numeric prefixes,
+            # and other non-relationship fields that would otherwise produce
+            # nonsense like "id_id" or "1_id".
             parts = failed_filter.split("__")
-            if len(parts) >= 2:
+            prefix = parts[0] if parts else ""
+            if len(parts) >= 2 and prefix and not prefix.isdigit() and prefix != "id":
                 strategy["approach"] = "two_step_query"
                 strategy["steps"] = [
                     {
-                        "description": f"Get {parts[0]} by name or other simple filter",
-                        "example": f'netbox_get_objects("dcim.{parts[0]}", {{"name": "<name>"}})',
+                        "description": f"Get {prefix} by name or other simple filter",
+                        "example": f'netbox_get_objects("dcim.{prefix}", {{"name": "<name>"}})',
                     },
                     {
-                        "description": f"Use the {parts[0]}_id from step 1 in the final query",
-                        "example": f'netbox_get_objects("<target_type>", {{"{parts[0]}_id": <id_from_step1>}})',
+                        "description": f"Use the {prefix}_id from step 1 in the final query",
+                        "example": f'netbox_get_objects("<target_type>", {{"{prefix}_id": <id_from_step1>}})',
                     },
                 ]
                 strategy["explanation"] = (
                     f"The filter '{failed_filter}' attempts to traverse a relationship, which is not supported. "
-                    f"Instead, first get the {parts[0]} object, then use its ID."
+                    f"Instead, first get the {prefix} object, then use its ID."
+                )
+            else:
+                strategy["approach"] = "simplify_filter"
+                strategy["steps"] = [
+                    {
+                        "description": f"Remove the lookup suffix from {failed_filter} and use the bare field name",
+                        "example": f'netbox_get_objects("<type>", {{"{prefix or "<field>"}": <value-or-list>}})',
+                    }
+                ]
+                strategy["explanation"] = (
+                    f"The filter '{failed_filter}' uses a double-underscore lookup that is not supported. "
+                    f"For a base field like '{prefix}', use the bare key with a single value or a list."
                 )
 
         elif error_type == "django_lookup":
-            # Generate search alternative
+            field = failed_filter.split("__")[0] if "__" in failed_filter else failed_filter
             if "__icontains" in failed_filter or "__contains" in failed_filter:
-                field = failed_filter.split("__")[0]
                 strategy["approach"] = "use_search"
                 strategy["steps"] = [
                     {
@@ -202,12 +225,27 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
                     "Django lookup suffixes like '__icontains' are not supported. "
                     "Use the search tool for pattern matching instead."
                 )
+            elif "__in" in failed_filter:
+                # Fetching a known set of IDs in one call — pass the list as the
+                # value of the bare key (NetBox accepts repeated query parameters).
+                strategy["approach"] = "list_form_filter"
+                strategy["steps"] = [
+                    {
+                        "description": f"Replace '{failed_filter}' with the bare key and pass the list as its value",
+                        "example": f'netbox_get_objects("<type>", filters={{"{field}": [<id1>, <id2>, ...]}})',
+                    }
+                ]
+                strategy["explanation"] = (
+                    f"The '__in' lookup is not supported. To batch multiple values, pass a Python list "
+                    f"as the value of the bare key '{field}'. NetBox treats this as a multi-value query "
+                    f"parameter (?{field}=1&{field}=2&...)."
+                )
             else:
                 strategy["approach"] = "exact_match"
                 strategy["steps"] = [
                     {
                         "description": f"Use exact match instead of {failed_filter}",
-                        "example": f'{{{field}: "<exact_value>"}}',
+                        "example": f'{{"{field}": "<exact_value>"}}',
                     }
                 ]
                 strategy["explanation"] = (
