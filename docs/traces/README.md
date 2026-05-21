@@ -19,6 +19,12 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-21
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-21_019e493c_skill-body-loaded.md](2026-05-21_019e493c_skill-body-loaded.md) | `019e493c-405b-7420-af70-283b57e3915e` | Multi-aspect tenant query (cold-start, Workaround A active) | **113s** | **First trace in project history where the skill BODY actually reaches the model.** DeepAgents #3185/#3188 worked around via HarnessProfile.tool_description_overrides + system_prompt_suffix; model now uses `read_file(file_path=...)` correctly and the skill content steers downstream tool syntax |
+
 ### 2026-05-16
 
 | File | Trace ID | Query | Duration | Description |
@@ -52,6 +58,17 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Skill body reaches the model — Workaround A landed (2026-05-21)
+**Query:** Same multi-aspect Dunder Mifflin query as 2026-05-16, this time with Workaround A active (HarnessProfile.tool_description_overrides + system_prompt_suffix to bypass DeepAgents issues #3185/#3188)
+- **Outcome:** First trace in project history where the skill BODY actually reaches the model. Model called `read_file(file_path='/src/skills/netbox-mcp-filters/SKILL.md', limit=200)` and got back 4039 bytes of actual skill content (vs 186-byte Pydantic error in every prior trace)
+- **Numbers:** 52 devices / 13 racks / 65 prefixes — canonical, matches the previously-memory-cached `019e1c9f` result
+- **Performance:** 113.6s wall (vs 121s `019e322f` baseline), 13 tool calls, 5 LLM cycles, 153K total tokens (most in prompt due to skill body now sitting in context)
+- **Skill influence:** BATCHING MULTIPLE IDs and DECOMPOSING MULTI-ASPECT QUERIES sections measurably steered tool syntax (site_id=[list] used directly, correct device count)
+- **Open work:** AVOID REDUNDANT SEARCHES and IPAM PREFIX FILTERING sections did NOT take effect this run — soft-constraint sections need stronger phrasing
+- **Validator insurance:** present but not exercised (model didn't make the mistake that would trigger it)
+- **Retroactive realisation:** every prior "skill landed" claim in this docs directory was wrong — only metadata was reaching the model, never the body
+- **File:** `2026-05-21_019e493c_skill-body-loaded.md`
 
 ### Multi-aspect query cold-start success on validator-hardened stack (2026-05-16)
 **Query:** Same multi-aspect query as 2026-05-12 / 2026-05-14, this time from a fresh thread (no memory carryover) after the validator-hardening fixes in commits 6262263 and 5430432
