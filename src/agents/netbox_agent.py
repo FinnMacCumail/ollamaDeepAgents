@@ -6,13 +6,74 @@ import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from deepagents import create_deep_agent
+from deepagents import HarnessProfile, create_deep_agent, register_harness_profile
 from deepagents.backends.filesystem import FilesystemBackend
 from langgraph.checkpoint.memory import InMemorySaver
 
 # Project root, computed from this file's location so skills resolve
 # regardless of the process's cwd at runtime.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Workaround for DeepAgents GitHub issues #3185 and #3188
+# (https://github.com/langchain-ai/deepagents/issues/3188 — both Closed,
+# Not planned). The shipped `read_file` tool description uses the wrong
+# argument name `path` in 3 of 4 worked examples while the actual schema
+# requires `file_path`. Models copy the bad examples verbatim, the calls
+# fail Pydantic validation, and the documented skill-loading mechanism
+# (progressive disclosure via `read_file` on SKILL.md) silently breaks.
+#
+# Empirically reproduced in trace 019e3b7e: the model called
+# `read_file(path=..., limit=1000)` and got back a 186-byte Pydantic
+# validation error instead of the ~10K-byte skill body. As a result the
+# `netbox-mcp-filters` skill's BATCHING / AVOID REDUNDANT / IPAM PREFIX
+# sections never reached the model.
+#
+# Two-pronged fix:
+#   1. `tool_description_overrides`: replace the read_file tool's
+#      description with a corrected version using `file_path=` throughout.
+#      This is the schema-of-record the model usually defers to.
+#   2. `system_prompt_suffix`: append a final clarification at the end of
+#      the system prompt. The SkillsMiddleware's own example workflow
+#      (in skills.py:817) still shows `read_file(path, limit=1000)` — that
+#      text is hardcoded in middleware and not reachable by
+#      tool_description_overrides. The suffix is positioned at the end of
+#      the prompt where instruction-following weight is highest, so it
+#      acts as a tiebreaker if the model is tempted by the bad example.
+_READ_FILE_CORRECTED = """Reads a file from the filesystem.
+
+CRITICAL: the argument name is `file_path` (NOT `path`). Always pass it as
+a keyword argument: read_file(file_path='/abs/path/to/file.txt').
+
+Usage:
+- By default reads up to 100 lines from the start of the file
+- For large files: paginate with `offset` and `limit`
+  - First scan:  read_file(file_path='...', limit=100)
+  - Read more:   read_file(file_path='...', offset=100, limit=200)
+  - Read full file (no pagination): read_file(file_path='...', limit=1000)
+- Results returned with line numbers (cat -n format)
+- Lines longer than 5000 chars are split with continuation markers (5.1, 5.2, …)
+- Image / audio / video / PDF files are returned as multimodal content blocks
+- Always read a file before editing it
+- You may call multiple read_file invocations in a single response (batch reads)
+"""
+
+_FILE_PATH_SUFFIX = (
+    "\n\nIMPORTANT (filesystem tools): When calling `read_file` — including to "
+    "load skill files under the Skills System's progressive-disclosure pattern — "
+    "the argument name is `file_path`, NOT `path`. Always pass it as a keyword "
+    "argument, e.g. read_file(file_path='/src/skills/<skill-name>/SKILL.md', "
+    "limit=1000). The same applies to write_file and edit_file."
+)
+
+_HARNESS_PROFILE = HarnessProfile(
+    tool_description_overrides={"read_file": _READ_FILE_CORRECTED},
+    system_prompt_suffix=_FILE_PATH_SUFFIX,
+)
+# Register provider-wide for both backends this project uses (`ollama` for the
+# cloud + local Ollama path, `openai` for the llama.cpp OpenAI-compatible path).
+# Registrations are additive — these layer on top of any built-in profile.
+for _provider in ("ollama", "openai"):
+    register_harness_profile(_provider, _HARNESS_PROFILE)
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware, TokenOptimizationMiddleware
