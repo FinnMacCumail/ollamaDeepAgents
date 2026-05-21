@@ -19,6 +19,12 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-16
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-16_019e322f_multi-aspect-validator-hardened.md](2026-05-16_019e322f_multi-aspect-validator-hardened.md) | `019e322f-b839-7d21-92b7-6ffd61aad509` | Multi-aspect tenant query (cold-start, validator-hardened) | 121s | First clean fresh-thread success at this query. Validator-hardening + BATCHING MULTIPLE IDs skill section land end-to-end; model uses `site_id=[list]` filter form |
+
 ### 2026-05-14
 
 | File | Trace ID | Query | Duration | Description |
@@ -46,6 +52,15 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Multi-aspect query cold-start success on validator-hardened stack (2026-05-16)
+**Query:** Same multi-aspect query as 2026-05-12 / 2026-05-14, this time from a fresh thread (no memory carryover) after the validator-hardening fixes in commits 6262263 and 5430432
+- **Outcome:** First clean fresh-thread success at this query in project history — `id__in` crash from 019e3220 resolved, model uses `site_id=[1,2,…,14]` list-form filter as the new BATCHING MULTIPLE IDs skill section teaches
+- **Performance:** 121s wall, 8 tool calls, 5 LLM cycles — realistic cold-start baseline for this query class on cloud
+- **Counts:** 52 devices / 13 racks / 65 prefixes (matches canonical `019e1c9f` numbers, derived this run by counting tool results rather than reading parent-object count fields)
+- **Architectural insurance not yet exercised:** the TOOL_VALIDATION_ERROR ToolMessage path from 5430432 is in place but the model didn't trip the validator this run
+- **Observation:** model used `read_file` as a skill-access backdoor in cycle 1 instead of `load_skill` — leak from FilesystemBackend's filesystem tools that we could close with tool exclusion
+- **File:** `2026-05-16_019e322f_multi-aspect-validator-hardened.md`
 
 ### Skills loaded — multi-aspect query (2026-05-14)
 **Query:** Same multi-aspect query as 2026-05-12 baseline, re-run after the FilesystemBackend skill-loader fix
