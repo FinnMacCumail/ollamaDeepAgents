@@ -78,6 +78,48 @@ lookup just to collect them — usually it's simpler to fetch the parent set (e.
 sites) and filter client-side, or use a `tenant_id` / `region_id` / similar
 relational filter that covers the group implicitly.
 
+## AVOID REDUNDANT SEARCHES
+
+When `netbox_search_objects` returns results, USE THEM. Do not issue further searches
+with variant query strings ("dunder", "mifflin", "DM-") hoping for more or different
+results — NetBox's search is already broad and case-insensitive across multiple fields.
+
+If the first search returned what looks like the right set, post-filter client-side
+rather than re-querying. If it returned nothing, try ONE alternative formulation, not
+several in parallel.
+
+```python
+# WRONG — three searches when one already returned the data
+netbox_search_objects(query="Dunder Mifflin")   # returns 14 sites
+netbox_search_objects(query="dunder")           # redundant, wastes a tool call
+netbox_search_objects(query="mifflin")          # redundant
+netbox_search_objects(query="DM-")              # redundant
+
+# RIGHT — trust the first search, post-filter if needed
+results = netbox_search_objects(query="Dunder Mifflin")
+# (filter results client-side by name prefix, status, etc.)
+```
+
+## IPAM PREFIX FILTERING
+
+`ipam.prefix` objects attach to scope objects (sites, locations, regions, vlans) via a
+generic `scope` field. For per-site prefix queries, the legacy `site_id` filter is
+supported and is the simplest path — DO NOT explore `scope_id` + `scope_type` filtering
+for site-scoped queries.
+
+```python
+# RIGHT — direct, single-key filter
+netbox_get_objects("ipam.prefix", filters={"site_id": 5}, fields=[...])
+netbox_get_objects("ipam.prefix", filters={"site_id": [1, 2, 3]}, fields=[...])
+
+# AVOID — unnecessary schema exploration for site-scoped queries
+netbox_get_objects("ipam.prefix", filters={"scope_id": 5, "scope_type": "dcim.site"})
+```
+
+The `scope_id` + `scope_type` pair is only worth reaching for when the user explicitly
+wants prefixes scoped to non-site objects (locations, vlans, etc.). For everything else,
+stick with `site_id`.
+
 ## DECOMPOSING MULTI-ASPECT QUERIES
 
 When the user asks for one entity *with* multiple related aspects (e.g. "show all sites
