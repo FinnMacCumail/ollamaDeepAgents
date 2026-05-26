@@ -99,65 +99,6 @@ class QueryMetricsMiddleware(AgentMiddleware):
         return self.metrics.report()
 
 
-class TokenOptimizationMiddleware(AgentMiddleware):
-    """
-    Middleware for optimizing token usage.
-
-    Strategies:
-    - Remove verbose tool outputs
-    - Summarize long responses
-    - Truncate repetitive data
-    """
-
-    def __init__(self, max_tokens_per_message: int = 1000):
-        """
-        Initialize token optimization.
-
-        Args:
-            max_tokens_per_message: Maximum tokens per message before truncation
-        """
-        self.max_tokens = max_tokens_per_message
-        self.logger = get_logger(__name__)
-
-    def after_model(self, state: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Optimize token usage in state after model execution.
-
-        Args:
-            state: Current agent state
-
-        Returns:
-            Modified state with optimized messages
-        """
-        messages = state.get("messages", [])
-        if not messages:
-            return None
-
-        optimized = False
-        for _i, msg in enumerate(messages):
-            if hasattr(msg, "content"):
-                content = str(msg.content)
-                # Rough token estimate (1 token ≈ 4 chars)
-                estimated_tokens = len(content) // 4
-
-                if estimated_tokens > self.max_tokens:
-                    # Truncate and add ellipsis
-                    truncated = content[: self.max_tokens * 4] + "\n[... truncated for token optimization]"
-                    msg.content = truncated
-                    optimized = True
-
-                    self.logger.debug(
-                        "Truncated message",
-                        original_tokens=estimated_tokens,
-                        new_tokens=len(truncated) // 4,
-                    )
-
-        if optimized:
-            return {"messages": messages}
-
-        return None
-
-
 class PerformanceMonitoringMiddleware(AgentMiddleware):
     """
     Middleware for monitoring overall system performance.

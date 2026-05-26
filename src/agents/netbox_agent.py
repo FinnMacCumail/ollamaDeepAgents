@@ -76,7 +76,7 @@ for _provider in ("ollama", "openai"):
     register_harness_profile(_provider, _HARNESS_PROFILE)
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
-from ..middleware.metrics import QueryMetricsMiddleware, TokenOptimizationMiddleware
+from ..middleware.metrics import QueryMetricsMiddleware
 from ..tools.netbox_tools import NetBoxToolWrapper, create_netbox_mcp_client
 from ..utils.config import NetBoxConfig, QueryMetrics, load_config
 from ..utils.logging import get_logger
@@ -290,8 +290,13 @@ class NetBoxDeepAgent:
             middleware.append(MetricsMiddleware(self.metrics))
             middleware.append(QueryMetricsMiddleware())
 
-        # Add token optimization
-        middleware.append(TokenOptimizationMiddleware(max_tokens_per_message=1000))
+        # (Previously: TokenOptimizationMiddleware capped messages at 1000 tokens
+        # / ~4000 chars and destructively head-truncated tool results and skill
+        # bodies — see trace 019e493c analysis. That middleware was a holdover
+        # from the local-14B-with-small-context era; it actively broke the
+        # progressive-disclosure skill loading once Workaround A unblocked it.
+        # DeepAgents' built-in SummarizationMiddleware handles real context
+        # overflow properly. Removed.)
 
         # Create the DeepAgent
         # Note: SummarizationMiddleware is added automatically by DeepAgents
