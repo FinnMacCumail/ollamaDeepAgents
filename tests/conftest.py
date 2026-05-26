@@ -100,27 +100,54 @@ def successful_queries():
 
 @pytest.fixture
 def invalid_filters():
-    """Invalid filter patterns that should be caught."""
+    """Filter patterns that the local validator should reject.
+
+    These are patterns NOT on the MCP server's VALID_SUFFIXES whitelist
+    (server.py:135-153) — Django-form lookups and multi-hop traversals.
+    """
     return [
+        # Multi-hop relationship traversals
         {"device__site_id": 5},
         {"termination_a__device_id": 19},
-        {"name__icontains": "dunder"},
         {"interface__device__name": "router01"},
-        {"created__gte": "2024-01-01"},
-        {"id__in": [1, 2, 3]},
+        # Django-form lookup suffixes (correct MCP forms: __ic, __isw, __iew, __ie)
+        {"name__icontains": "dunder"},
+        {"name__contains": "dunder"},
+        {"name__startswith": "core-"},
+        {"name__endswith": "-01"},
+        {"name__iexact": "Router01"},
     ]
 
 
 @pytest.fixture
 def valid_filters():
-    """Valid filter patterns that should work."""
+    """Filter patterns that should pass validation.
+
+    Includes bare-key direct filters AND every suffix on the MCP server's
+    VALID_SUFFIXES whitelist.
+    """
     return [
+        # Bare-key direct filters
         {"device_id": 123},
         {"site_id": 5},
         {"name": "exact-name"},
         {"status": "active"},
         {"role": "server"},
         {"device_id": 42, "status": "active"},
+        # Multi-value via list (NetBox repeats query params)
+        {"site_id": [1, 2, 3]},
+        # Whitelisted lookup suffixes
+        {"name__ic": "switch"},        # case-insensitive contains
+        {"name__isw": "core-"},        # case-insensitive starts-with
+        {"name__iew": "-01"},          # case-insensitive ends-with
+        {"name__ie": "Router01"},      # case-insensitive exact
+        {"name__n": "decom"},          # negation
+        {"id__in": [1, 2, 3]},         # multi-value lookup form
+        {"created__gte": "2024-01-01"},
+        {"created__gt": "2024-01-01"},
+        {"vid__lt": 100},
+        {"status__regex": "^act"},
+        {"serial__empty": "true"},
     ]
 
 

@@ -45,35 +45,63 @@ class TestFilterValidator:
             assert "relationship traversal" in error
 
     def test_django_lookup_detection(self):
-        """Test detection of Django ORM lookups."""
+        """Test detection of Django ORM lookups that lack a valid MCP equivalent.
+
+        Note: Django spellings like `__icontains` are NOT on the MCP server's
+        whitelist (which uses short forms like `__ic`). But `__in`, `__gte`,
+        `__regex` etc. ARE on the whitelist and must NOT be rejected.
+        """
         validator = FilterValidator()
 
-        django_lookups = [
+        # Django-form lookups with case-insensitive short-form equivalents — all rejected
+        rejected_django_forms = [
             {"name__icontains": "server"},
-            {"created__gte": "2024-01-01"},
-            {"id__in": [1, 2, 3]},
-            {"status__regex": ".*active.*"},
+            {"name__contains": "server"},
+            {"name__startswith": "core-"},
+            {"name__endswith": "-01"},
+            {"name__iexact": "Router01"},
         ]
-
-        for filter_dict in django_lookups:
+        for filter_dict in rejected_django_forms:
             is_valid, error = validator.validate_filter(filter_dict)
-            assert is_valid is False
-            assert "unsupported lookup" in error
+            assert is_valid is False, f"{filter_dict} should be rejected"
+            assert "not on the MCP server's whitelist" in error or "not supported" in error
+
+        # These ARE on the MCP server's VALID_SUFFIXES whitelist — must pass
+        accepted_lookups = [
+            {"id__in": [1, 2, 3]},
+            {"created__gte": "2024-01-01"},
+            {"created__gt": "2024-01-01"},
+            {"vid__lt": 100},
+            {"vid__lte": 100},
+            {"status__regex": ".*active.*"},
+            {"name__iregex": "^router-.*"},
+            {"name__ic": "switch"},
+            {"name__n": "decom"},
+        ]
+        for filter_dict in accepted_lookups:
+            is_valid, error = validator.validate_filter(filter_dict)
+            assert is_valid is True, f"{filter_dict} should be accepted (was rejected: {error})"
 
     def test_suggest_alternative_for_icontains(self):
-        """Test alternative suggestions for icontains filters."""
+        """Test alternative suggestion for the Django `__icontains` form.
+
+        The validator now translates Django forms to their MCP short-form
+        equivalents directly (icontains -> ic), rather than redirecting to
+        netbox_search_objects.
+        """
         validator = FilterValidator()
 
         suggestion = validator.suggest_alternative("name__icontains")
-        assert "search" in suggestion.lower()
-        assert "netbox_search_objects" in suggestion
+        # The new suggestion points to the MCP short form, not search
+        assert "__ic" in suggestion
+        assert "filters={'name__ic'" in suggestion
 
     def test_suggest_alternative_for_relationship(self):
-        """Test alternative suggestions for relationship filters."""
+        """Test alternative suggestions for multi-hop relationship traversals."""
         validator = FilterValidator()
 
-        suggestion = validator.suggest_alternative("device__site_id")
-        assert "two-step" in suggestion.lower()
+        suggestion = validator.suggest_alternative("device__site_id__name")
+        assert "two-step query" in suggestion.lower()
         assert "device_id" in suggestion
 
 

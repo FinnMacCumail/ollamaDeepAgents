@@ -10,16 +10,31 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Known problematic filter patterns that will fail with MCP
-INVALID_FILTER_PATTERNS = [
-    r".*__.*__.*",  # Multi-hop filters (e.g., device__site__name)
-    r".*__(icontains|contains|startswith|endswith|regex|iregex|in|gt|gte|lt|lte)$",  # Django lookups
-    r"^(termination_[ab]|device|site|rack)__\w+",  # Relationship traversals
-]
+# Lookup suffixes the MCP server's validate_filters() permits.
+# Source of truth: netbox-mcp-server/src/netbox_mcp_server/server.py:135-153
+# (the VALID_SUFFIXES frozenset). Keep this in sync with the upstream whitelist.
+# A previous version of this file maintained a blacklist that incorrectly
+# rejected `__in`, `__regex`, `__gt`, `__gte`, `__lt`, `__lte`, `__iregex` —
+# all of which ARE valid per the MCP server. Trace 019e63c0 surfaced the
+# inconsistency: the skill content (correct) and this validator (wrong) gave
+# the model contradictory guidance, costing a recovery cycle per attempt.
+VALID_SUFFIXES: frozenset[str] = frozenset({
+    "n",
+    "ic", "nic", "isw", "nisw", "iew", "niew", "ie", "nie",
+    "empty",
+    "regex", "iregex",
+    "lt", "lte", "gt", "gte",
+    "in",
+})
 
 
 class FilterValidator:
-    """Validates NetBox filters before sending to MCP server."""
+    """Validates NetBox filters before sending to MCP server.
+
+    Mirrors the MCP server's own validate_filters() at server.py:117 — rejects
+    multi-hop relationship traversals (any chain of `__field__field`) and
+    double-underscore suffixes not on the VALID_SUFFIXES whitelist.
+    """
 
     @staticmethod
     def validate_filter(filter_dict: dict[str, Any]) -> tuple[bool, str | None]:
@@ -32,68 +47,80 @@ class FilterValidator:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        for key, _value in filter_dict.items():
-            # Check for multi-hop patterns
-            if "__" in key:
-                # Check against known invalid patterns
-                for pattern in INVALID_FILTER_PATTERNS:
-                    if re.match(pattern, key):
-                        return False, f"Invalid filter pattern: {key} (contains unsupported lookup or relationship traversal)"
+        for key in filter_dict:
+            if "__" not in key:
+                continue  # bare key (e.g. site_id, name, status) — always allowed
+
+            parts = key.split("__")
+            if len(parts) != 2:
+                return (
+                    False,
+                    f"Invalid filter pattern: {key} (multi-hop relationship "
+                    f"traversal not supported — use a two-step query instead)",
+                )
+
+            suffix = parts[1]
+            if suffix not in VALID_SUFFIXES:
+                return (
+                    False,
+                    f"Invalid filter pattern: {key} (suffix '__{suffix}' is not "
+                    f"on the MCP server's whitelist; allowed: "
+                    f"{', '.join(sorted(VALID_SUFFIXES))})",
+                )
 
         return True, None
 
+    # Translation from Django ORM lookup names to MCP-server-accepted suffixes.
+    # The MCP server accepts case-insensitive short forms (`ic`/`isw`/`iew`/`ie`)
+    # but NOT the Django spellings (`icontains`/`startswith`/etc.). Translate
+    # directly so the model gets a drop-in replacement, not a "use search" detour.
+    _DJANGO_TO_MCP = {
+        "icontains": "ic",
+        "contains": "ic",       # downgrade to case-insensitive
+        "istartswith": "isw",
+        "startswith": "isw",
+        "iendswith": "iew",
+        "endswith": "iew",
+        "iexact": "ie",
+        "exact": "ie",
+    }
+
     @staticmethod
     def suggest_alternative(invalid_filter: str) -> str:
-        """
-        Suggest an alternative approach for an invalid filter.
+        """Suggest an alternative for a filter rejected by validate_filter.
 
-        Args:
-            invalid_filter: The invalid filter key
-
-        Returns:
-            Suggestion for how to fix the filter
+        With the allow-list-based validator, only two rejection paths reach
+        here: multi-hop traversals (>2 `__`-separated parts) and unknown
+        suffixes (not on VALID_SUFFIXES). Most unknown suffixes that the
+        model is likely to try are Django ORM lookup names with short MCP
+        equivalents — translate those directly.
         """
         if "__" not in invalid_filter:
-            return "Use direct ID filters or exact name matches"
+            return "Use a direct field filter (e.g. {'site_id': 5} or {'name': 'foo'})."
 
         parts = invalid_filter.split("__")
         if len(parts) > 2:
-            return "Break into multiple queries, fetching intermediate objects first"
+            return (
+                f"'{invalid_filter}' is a multi-hop relationship traversal, which the "
+                f"MCP server does not support. Use a two-step query: first fetch the "
+                f"intermediate object by name, then filter the target type by its id "
+                f"(e.g. '{parts[0]}_id')."
+            )
 
         field, suffix = parts[0], parts[1]
 
-        # __in lookup: batch by passing a list as the bare-key value
-        if suffix == "in":
+        if suffix in FilterValidator._DJANGO_TO_MCP:
+            correct = FilterValidator._DJANGO_TO_MCP[suffix]
             return (
-                f"Replace '{invalid_filter}' with the bare key and pass the list as its "
-                f"value: filters={{'{field}': [<v1>, <v2>, ...]}}. NetBox accepts "
-                f"repeated query parameters as multi-value (?{field}=1&{field}=2&...)."
+                f"The Django-form suffix '__{suffix}' is not on the MCP server's "
+                f"whitelist. Use '__{correct}' instead: "
+                f"filters={{'{field}__{correct}': '<value>'}}"
             )
 
-        # Pattern-matching lookups: route to search
-        if suffix in ("icontains", "contains", "startswith", "endswith", "regex", "iregex"):
-            return f"Use netbox_search_objects(query='...') instead of {invalid_filter}"
-
-        # Numeric comparisons: only exact match is supported
-        if suffix in ("gt", "gte", "lt", "lte"):
-            return (
-                f"Comparison suffix '{suffix}' is not supported. Fetch a broader set "
-                f"and filter client-side, or use exact match."
-            )
-
-        # Relationship traversals — only meaningful when the prefix refers to a
-        # related object (not 'id' or numeric prefixes).
-        if field and not field.isdigit() and field != "id":
-            return (
-                f"Perform two-step query: 1) Get {field} by name "
-                f"(netbox_get_objects('dcim.{field}', filters={{'name': '<name>'}})), "
-                f"2) Use the returned id with the {field}_id filter."
-            )
-
-        # Fallback: bare field with unsupported suffix — strip the suffix.
         return (
-            f"Drop the '__{suffix}' suffix and use the bare key '{field}' with a "
-            f"single value or a list."
+            f"The suffix '__{suffix}' is not supported. Valid suffixes are: "
+            f"{', '.join(sorted(VALID_SUFFIXES))}. For relationship filters, "
+            f"drop the suffix and use the bare key with a single value or a list."
         )
 
 
