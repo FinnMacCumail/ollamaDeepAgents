@@ -19,6 +19,12 @@ YYYY-MM-DD_comparison_<description>.md
 
 ## Available Reports
 
+### 2026-05-26
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-26_019e6322_full-skill-body-compound-fix.md](2026-05-26_019e6322_full-skill-body-compound-fix.md) | `019e6322-8ecf-7d83-8bd4-f0f90d722fa1` | Multi-aspect tenant query (cold-start, TokenOptimizationMiddleware removed) | **73s** | **Compound-fix baseline.** Full skill body (13862 bytes) now persists across turns. DECOMPOSING MULTI-ASPECT QUERIES section lands — model uses parent-object count fields directly. 35% wall-time reduction vs `019e493c`, 37% token reduction. Establishes new realistic cold-start baseline. |
+
 ### 2026-05-21
 
 | File | Trace ID | Query | Duration | Description |
@@ -58,6 +64,17 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Compound-fix baseline — full skill body persists across turns (2026-05-26)
+**Query:** Same multi-aspect Dunder Mifflin query, this time after removing TokenOptimizationMiddleware (commit 01df4e9) — which was destructively head-truncating tool results and skill body to ~4000 chars after every LLM cycle
+- **Outcome:** Full skill body (13862 bytes) loads in cycle 1 AND persists across all subsequent turns. Five of seven skill sections now measurably reach the model, vs two of seven in the truncated-state era
+- **Pivotal observation:** Cycle 3 query used `device_count`, `rack_count`, `prefix_count`, `vlan_count`, `circuit_count` as fields on `dcim.site` — the DECOMPOSING MULTI-ASPECT QUERIES skill section landing for the first time. Single query replaces ~14 per-site enumerations.
+- **Performance:** 73.4s wall (35% faster than 113s `019e493c`), 96K total tokens (37% lower than 153K), ~8 tool calls (down from 13)
+- **Tool result sizes:** all natural — the `bytes=4039` truncation artifact appearing 8+ times in every prior trace is completely absent. `read_file` returns 13862 bytes, `ipam.prefix` 17781, `dcim.site` 12279.
+- **Retroactive realisation #2:** every prior trace report's "skill section X didn't take effect" finding was partly the truncation middleware silently censoring the body below ~78 lines. The "soft-constraint friction" interpretation was misleading — the guidance often never arrived.
+- **Open work:** AVOID REDUNDANT SEARCHES is the only section still showing soft-constraint friction (one duplicate `query="dunder"` in cycle 2). All other skill sections that previously sat below the cut now reach and steer the model.
+- **Architectural status:** every layer of the multi-fix arc (cloud model + skills loader + Workaround A + truncation removed + validator hardening + memory + skill content) is now operating correctly together. This trace is the first measurement of the system running as designed end-to-end.
+- **File:** `2026-05-26_019e6322_full-skill-body-compound-fix.md`
 
 ### Skill body reaches the model — Workaround A landed (2026-05-21)
 **Query:** Same multi-aspect Dunder Mifflin query as 2026-05-16, this time with Workaround A active (HarnessProfile.tool_description_overrides + system_prompt_suffix to bypass DeepAgents issues #3185/#3188)
