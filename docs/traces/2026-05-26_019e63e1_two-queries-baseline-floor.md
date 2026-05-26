@@ -192,14 +192,59 @@ The architectural insurance from `34585be` makes the system robust enough that f
 
 ---
 
-## Verdict
+## Postscript — apples-to-apples calibration vs Claude SDK
 
-**The multi-fix arc spanning 8 weeks and 30+ commits is functionally complete.** Both benchmark queries operate at the architectural floor with no recoveries needed. The cleanest paired result in the project's history.
+This report originally framed the 58.6s / 29.5s wall times against an implicit "we now match or beat Claude SDK" comparison. After publishing, the user noticed that SDK traces in the same period share a `thread_id` even when the SDK web UI's "new conversation" button has been clicked. Investigation of recent SDK traces in the `netbox-chatbox` project revealed:
 
-Future trace reports should compare against 58.6s (multi-aspect) and 29.5s (device IP lookup) as the new reference baselines. Improvements from here require architectural change (model routing, GraphQL, subagent dispatch), not skill-content tuning.
+| SDK trace | Wall | Input tokens | User prompt size | Implication |
+|---|---|---|---|---|
+| `019e64ca` (VLAN 100 follow-up) | 31.7s | 210,550 | ~30 tokens | ~210K tokens of pre-existing context |
+| `019e64c5` (VLAN 100 query) | 38.7s | 181,330 | ~30 tokens | ~181K tokens of pre-existing context |
+| `019e638a` (dmi01-nashua, our prior comparison) | 36.2s | 206,514 | ~30 tokens | ~206K tokens of pre-existing context |
+| Earlier same-day SDK trace | 27.0s | 203,034 | ~30 tokens | ~203K tokens of pre-existing context |
+
+System prompt accounts for ~600 of those input tokens. **The remaining ~200K tokens per SDK trace are conversation history** — accumulated tool results, prior turn context, tenant/site/device data already known to the model.
+
+In contrast, our deepseek runs in this trace report restart completely cold every query (user explicitly confirmed exiting and restarting the app between queries; `InMemorySaver` is purged on process exit). First-LLM-call input for our cold-start traces is ~10K tokens — almost all of which is the system prompt + DeepAgents prompt + skill metadata, with no inherited query-specific context.
+
+### What this reframes
+
+- **`019e63e3`'s 29.5s did NOT beat an SDK cold-start at 36.2s.** It beat an SDK trace that had ~206K tokens of pre-warmed institutional knowledge already loaded — tenant IDs, site IDs, the `count_ipaddresses` insight, possibly even the device's `count_ipaddresses=0` finding from a prior similar query. Our cold-start beating that asymmetric comparison is actually MORE meaningful than the raw numbers suggested.
+
+- **`019e63e1`'s 58.6s comparison loses an argument.** The implicit framing was "we hit the architectural floor of what this stack can do" — that's still true for THIS query class run cold. But "architectural floor" doesn't translate to "competitive with Claude SDK across the board," because the SDK isn't running cold.
+
+- **Future SDK comparisons need calibration.** A fair benchmark either needs SDK started from a genuinely fresh session (incognito browser, or backend session reset), OR our agent run with accumulated thread context. Otherwise the comparison conflates per-query latency with per-query-with-warm-cache latency.
+
+### What this does NOT change
+
+- Both benchmark queries hit best-ever wall times for our stack. The skill-content + architectural-insurance progression is real.
+- The skill-content patterns (count_ipaddresses, full count-field projection, validator alignment) work as designed. They steer the model toward optimal paths.
+- The 29.5s / 58.6s numbers remain valid as **our cold-start baselines** — they're the right reference for future internal regressions.
+
+What they're NOT is "the cold-start floor that matches Claude SDK." Establishing that comparison properly is an open task.
+
+### Speculation on SDK's caching mechanism
+
+Three plausible architectures, in order of likelihood based on observed behaviour:
+
+1. **Persistent backend agent.** The SDK app runs the Anthropic agent loop in a long-lived process. The web UI's "new conversation" creates a new visual thread but the underlying agent keeps prior messages in its message list.
+2. **Stateful Anthropic session.** The SDK uses Anthropic's hosted conversation session feature where the message list grows server-side and is referenced by session ID.
+3. **Explicit context-threading.** The SDK explicitly threads a curated subset of prior tool results into each new conversation's system prompt.
+
+All three produce the same observable signature (large input token count on otherwise-fresh-looking traces) and benefit from Anthropic's prompt caching to make the cost negligible. Distinguishing requires reading the SDK app's source.
 
 ---
 
-**Analysed:** 2026-05-26
-**Comparison:** Both benchmark queries at architectural floor; full multi-fix arc validated end-to-end
-**Verdict:** Compound arc complete. New baselines established for both query classes.
+## Verdict
+
+**The multi-fix arc spanning 8 weeks and 30+ commits is functionally complete for our own stack.** Both benchmark queries operate at the cold-start architectural floor for our configuration with no recoveries needed. The cleanest paired result in the project's history.
+
+The "competitive with Claude SDK" framing in the original report draft is incomplete pending an apples-to-apples cold-start comparison. The wall-time numbers reported here are valid as internal reference baselines (58.6s multi-aspect cold-start; 29.5s device IP lookup cold-start) for catching future regressions in our own stack. Cross-stack comparisons need to control for accumulated-context asymmetry.
+
+Future improvements within our stack require architectural change (model routing, GraphQL, subagent dispatch), not skill-content tuning. Cross-stack parity comparisons require a separate methodology.
+
+---
+
+**Analysed:** 2026-05-26 (postscript added later same day after SDK-context calibration finding)
+**Comparison:** Both benchmark queries at architectural floor for our cold-start configuration; SDK comparisons require accumulated-context calibration
+**Verdict:** Compound arc complete for our stack. New internal baselines established. Cross-stack parity claims pending fair-comparison methodology.
