@@ -25,6 +25,12 @@ YYYY-MM-DD_comparison_<description>.md
 |------|----------|-------|----------|-------------|
 | [2026-05-26_019e6322_full-skill-body-compound-fix.md](2026-05-26_019e6322_full-skill-body-compound-fix.md) | `019e6322-8ecf-7d83-8bd4-f0f90d722fa1` | Multi-aspect tenant query (cold-start, TokenOptimizationMiddleware removed) | **73s** | **Compound-fix baseline.** Full skill body (13862 bytes) now persists across turns. DECOMPOSING MULTI-ASPECT QUERIES section lands — model uses parent-object count fields directly. 35% wall-time reduction vs `019e493c`, 37% token reduction. Establishes new realistic cold-start baseline. |
 
+### 2026-05-26 (later in day — arc complete)
+
+| File | Trace ID | Query | Duration | Description |
+|------|----------|-------|----------|-------------|
+| [2026-05-26_019e63e1_two-queries-baseline-floor.md](2026-05-26_019e63e1_two-queries-baseline-floor.md) | `019e63e1-9161-70a0-9e4d-72b98d508229` (+ `019e63e3-6445-7283-8393-c72f15b32c7e`) | Multi-aspect + device IP lookup (both queries) | **58.6s + 29.5s** | **Both benchmark queries at architectural floor.** Cleanest paired result in project history. Multi-aspect best-ever (was 73s); device IP lookup best-ever (was 69.5s). Validates full multi-fix arc end-to-end; ToolException recovery insurance in place but unexercised (skill content steered correctly first attempt). |
+
 ### 2026-05-21
 
 | File | Trace ID | Query | Duration | Description |
@@ -64,6 +70,16 @@ YYYY-MM-DD_comparison_<description>.md
 | [2026-05-04_comparison_streaming-fix.md](2026-05-04_comparison_streaming-fix.md) | Multiple | Various | - | Before/after comparison of streaming filter fix |
 
 ## Key Findings Summary
+
+### Two queries at architectural floor — compound arc complete (2026-05-26, later in day)
+**Queries:** Multi-aspect Dunder Mifflin (cold-start) AND device IP lookup (dmi01-nashua-rtr01) in two separate threads, both on revision `34585be`
+- **Outcome:** Both benchmark queries hit best-ever wall times. Multi-aspect: 58.6s (20% faster than 73s baseline `019e6322`); device IP lookup: 29.5s (57% faster than 69.5s `019e63c2`). Cleanest paired result in project history.
+- **Direct skill-content evidence:** Multi-aspect query used `name__ic` lookup (first time any `__`-suffix other than `__in` appeared in any trace), used the full six-field count projection on `dcim.site` in one call, and decomposed cleanly with three parallel calls. Device IP lookup used `count_ipaddresses` short-circuit on first attempt — never issued the `ipam.ipaddress` query that crashed `019e638c`/`019e63d4`.
+- **ToolException recovery insurance unexercised:** the `TOOL_API_ERROR` handler added in `34585be` is in place but did not fire on either trace — the skill content steered the model to correct patterns from the start, which is the best possible outcome (insurance present but not needed).
+- **Compound effect realised:** every layer of the multi-week arc (cloud model + skills loader + Workaround A + truncation removal + Round 1 skill content + validator alignment + GFK warning + ToolException recovery) contributes measurably to these wall times.
+- **Remaining residual gap:** AVOID REDUNDANT SEARCHES still partial — multi-aspect cycle 2 hedges with parallel searches when cycle 1's returned empty (~2-3s cost). Soft-constraint friction, not addressable via skill content alone.
+- **Verdict:** skill-content low-hanging fruit largely exhausted. Future improvements require architectural change (model routing, GraphQL fan-out, subagent dispatch) rather than skill tuning. These two wall times become the new reference baselines for the respective query classes.
+- **File:** `2026-05-26_019e63e1_two-queries-baseline-floor.md`
 
 ### Compound-fix baseline — full skill body persists across turns (2026-05-26)
 **Query:** Same multi-aspect Dunder Mifflin query, this time after removing TokenOptimizationMiddleware (commit 01df4e9) — which was destructively head-truncating tool results and skill body to ~4000 chars after every LLM cycle
