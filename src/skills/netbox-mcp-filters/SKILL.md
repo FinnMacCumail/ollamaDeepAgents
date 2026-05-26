@@ -71,10 +71,13 @@ netbox_get_objects("dcim.rack", filters={"site_id": [1, 2, 3]}, fields=[...])
 Prefer the `__in` form — it matches the MCP server's tool-docstring example
 (`{'id__in': [1,2,3]}`) and is unambiguous.
 
-### Important exception — GenericForeignKey ID fields are SCALAR
+### CRITICAL exception — GenericForeignKey ID fields are SCALAR
 
 A few filters look like `*_id` but are actually scalar (single value only) because they
-target a GenericForeignKey. Neither `__in` nor list-form works on these:
+target a GenericForeignKey. **NEITHER `__in` NOR list-form works on these — even though
+the validator and the MCP server's whitelist BOTH accept `__in` in general.** This is a
+NetBox API-side limitation, not a syntax limitation. The validator cannot detect it for
+you; the request will reach NetBox and come back as HTTP 400.
 
 | Object | Scalar GFK ID field | Use this multi-value alias instead |
 |---|---|---|
@@ -83,9 +86,25 @@ target a GenericForeignKey. Neither `__in` nor list-form works on these:
 | `virtualization.cluster` | `scope_id` (paired with `scope_type`) | `site_id`, `location_id`, `region_id` |
 | `tenancy.contactassignment` | `object_id` (paired with `object_type`) | `contact_id`, `role_id` |
 
-If you try to use multi-value on `assigned_object_id` + `assigned_object_type`, NetBox
-returns HTTP 400 (or silently returns the wrong result set). See the
-"FILTERING IP ADDRESSES BY ASSIGNED OBJECT" section below for the correct pattern.
+```python
+# BOTH OF THESE FAIL with HTTP 400 — confirmed in traces 019e638c and 019e63d4.
+# The validator does NOT catch them; NetBox itself rejects the combination.
+
+netbox_get_objects("ipam.ipaddress",
+    filters={"assigned_object_id": [66, 67, ...],          # WRONG — list-form
+             "assigned_object_type": "dcim.interface"})
+
+netbox_get_objects("ipam.ipaddress",
+    filters={"assigned_object_id__in": [66, 67, ...],      # WRONG — __in lookup
+             "assigned_object_type": "dcim.interface"})
+
+# ALWAYS use the typed alias filter (multi-value capable, NetBox-supported):
+netbox_get_objects("ipam.ipaddress",
+    filters={"interface_id": [66, 67, ...]})               # RIGHT
+```
+
+See the "FILTERING IP ADDRESSES BY ASSIGNED OBJECT" section below for the full pattern
+including the `count_ipaddresses` short-circuit that avoids the query entirely.
 
 ### When NOT to batch
 
@@ -101,10 +120,16 @@ VM interfaces, or FHRP groups). The schema fields are `assigned_object_type` (st
 and `assigned_object_id` (int). DO NOT combine these directly with multi-value:
 
 ```python
-# WRONG — returns HTTP 400. `assigned_object_id` is scalar; combining with
-# multi-value `assigned_object_type` is unsupported by NetBox's GFK filter.
+# WRONG (list-form) — returns HTTP 400. `assigned_object_id` is scalar.
 netbox_get_objects("ipam.ipaddress",
     filters={"assigned_object_id": [66, 67, 68, ...],
+             "assigned_object_type": "dcim.interface"})
+
+# ALSO WRONG (__in lookup) — the validator accepts it (`__in` is on the MCP
+# whitelist) but NetBox returns HTTP 400 because GFK ID fields don't
+# support multi-value filtering. Confirmed in trace 019e63d4.
+netbox_get_objects("ipam.ipaddress",
+    filters={"assigned_object_id__in": [66, 67, 68, ...],
              "assigned_object_type": "dcim.interface"})
 ```
 

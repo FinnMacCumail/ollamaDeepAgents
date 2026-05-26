@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools.base import ToolException
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from ..utils.logging import get_logger
@@ -201,8 +202,41 @@ class NetBoxToolWrapper:
                 result = await original_func(*args, **kwargs)
                 logger.debug(f"Tool {tool.name} executed successfully", kwargs=kwargs)
                 return result
+            except ToolException as e:
+                # MCP-layer ToolException (typically a NetBox API 400/404/500
+                # wrapped by langchain_mcp_adapters). Convert to a structured
+                # error STRING so langgraph threads it back as a ToolMessage —
+                # the model sees the error on its next turn and can retry with
+                # a corrected call. Without this, the ToolException propagates
+                # up and crashes the entire agent run (observed in traces
+                # 019df9d8, 019e638c, 019e63d4).
+                error_msg = str(e)
+                logger.warning(
+                    "Tool returned ToolException — converting to structured error",
+                    tool=tool.name,
+                    error=error_msg,
+                    kwargs=kwargs,
+                )
+                return (
+                    f"TOOL_API_ERROR: {error_msg}\n"
+                    f"The NetBox API or MCP server rejected this call. Re-examine "
+                    f"the filter parameters and reissue with a corrected shape. "
+                    f"Common causes (consult the netbox-mcp-filters skill):\n"
+                    f"  - GenericForeignKey ID fields (assigned_object_id, scope_id, "
+                    f"object_id) are SCALAR — even `__in` fails on these. Use the "
+                    f"typed alias filter instead (e.g. `interface_id` for IPs on "
+                    f"interfaces, `site_id` for prefixes on sites).\n"
+                    f"  - Display names used where slugs/IDs are required "
+                    f"(e.g. `site='DM-Akron'` should be `site='dm-akron'` or "
+                    f"`site_id=2`).\n"
+                    f"  - Lowercase slugs required for status/role values "
+                    f"(`active` not `Active`).\n"
+                    f"  - Or use a parent-object aggregate field "
+                    f"(e.g. `count_ipaddresses` on `dcim.interface`) to avoid "
+                    f"the failing query entirely."
+                )
             except Exception as e:
-                logger.error(f"Tool {tool.name} failed", error=str(e), kwargs=kwargs)
+                logger.error(f"Tool {tool.name} failed unexpectedly", error=str(e), kwargs=kwargs)
                 raise
 
         # Create new tool with validation wrapper
