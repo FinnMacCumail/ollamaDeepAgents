@@ -1,6 +1,7 @@
 """NetBox DeepAgent implementation with Ollama and MCP integration."""
 
 import asyncio
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -14,71 +15,59 @@ from langgraph.checkpoint.memory import InMemorySaver
 # regardless of the process's cwd at runtime.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# Workaround for DeepAgents GitHub issues #3185 and #3188
-# (https://github.com/langchain-ai/deepagents/issues/3188 — both Closed,
-# Not planned). The shipped `read_file` tool description uses the wrong
-# argument name `path` in 3 of 4 worked examples while the actual schema
-# requires `file_path`. Models copy the bad examples verbatim, the calls
-# fail Pydantic validation, and the documented skill-loading mechanism
-# (progressive disclosure via `read_file` on SKILL.md) silently breaks.
+# Workaround A for DeepAgents issues #3185 / #3188 (the `read_file(path=…)`
+# vs `file_path` documentation bug that broke skill loading on 0.5.x) was
+# removed on the 0.6.10 upgrade — the upstream fix shipped: filesystem.py
+# now uses `file_path=` consistently in all worked examples and skills.py
+# no longer has the hardcoded bad example.
+
+# Workaround B (added on 0.6.10 upgrade) — suppress two pieces of 0.6's
+# default behaviour that actively regress this agent's quality on negative-
+# finding queries (e.g. "where is VLAN X deployed at tenant Y?" when the
+# answer is "not deployed"). Diagnostic recorded in trace
+# 019ec810-1793-78f0-b608-7fd76f5bce0f and discussed in the upgrade
+# investigation notes (2026-06-14).
 #
-# Empirically reproduced in trace 019e3b7e: the model called
-# `read_file(path=..., limit=1000)` and got back a 186-byte Pydantic
-# validation error instead of the ~10K-byte skill body. As a result the
-# `netbox-mcp-filters` skill's BATCHING / AVOID REDUNDANT / IPAM PREFIX
-# sections never reached the model.
+# Two suppressions:
 #
-# Two-pronged fix:
-#   1. `tool_description_overrides`: replace the read_file tool's
-#      description with a corrected version using `file_path=` throughout.
-#      This is the schema-of-record the model usually defers to.
-#   2. `system_prompt_suffix`: append a final clarification at the end of
-#      the system prompt. The SkillsMiddleware's own example workflow
-#      (in skills.py:817) still shows `read_file(path, limit=1000)` — that
-#      text is hardcoded in middleware and not reachable by
-#      tool_description_overrides. The suffix is positioned at the end of
-#      the prompt where instruction-following weight is highest, so it
-#      acts as a tiebreaker if the model is tempted by the bad example.
-_READ_FILE_CORRECTED = """Reads a file from the filesystem.
-
-CRITICAL: the argument name is `file_path` (NOT `path`). Always pass it as
-a keyword argument: read_file(file_path='/abs/path/to/file.txt').
-
-Usage:
-- By default reads up to 100 lines from the start of the file
-- For large files: paginate with `offset` and `limit`
-  - First scan:  read_file(file_path='...', limit=100)
-  - Read more:   read_file(file_path='...', offset=100, limit=200)
-  - Read full file (no pagination): read_file(file_path='...', limit=1000)
-- Results returned with line numbers (cat -n format)
-- Lines longer than 5000 chars are split with continuation markers (5.1, 5.2, …)
-- Image / audio / video / PDF files are returned as multimodal content blocks
-- Always read a file before editing it
-- You may call multiple read_file invocations in a single response (batch reads)
-"""
-
-_FILE_PATH_SUFFIX = (
-    "\n\nIMPORTANT (filesystem tools): When calling `read_file` — including to "
-    "load skill files under the Skills System's progressive-disclosure pattern — "
-    "the argument name is `file_path`, NOT `path`. Always pass it as a keyword "
-    "argument, e.g. read_file(file_path='/src/skills/<skill-name>/SKILL.md', "
-    "limit=1000). The same applies to write_file and edit_file."
+# 1. `base_system_prompt=""` — overrides `BASE_AGENT_PROMPT` (the 2258-char
+#    default deep-agent prompt 0.6 silently appends to every system_prompt).
+#    Its "iterate", "verify against what was asked, not your own output",
+#    and "keep working until task is fully complete; only yield back when
+#    done or genuinely blocked" instructions are designed for coding/research
+#    agents. For a read-only infrastructure query agent they actively cause
+#    over-investigation hedging on negative findings — empirically observed
+#    as 18 tool calls on the VLAN 100 query (vs. 8 baseline) with redundant
+#    search variants ("Jimbob's"/"Jimbob"/"Banking") that the
+#    `netbox-mcp-filters` skill's AVOID REDUNDANT SEARCHES section
+#    explicitly prohibits. Suppressing entirely restores 0.5.6 prompt
+#    behaviour; NETBOX_SYSTEM_PROMPT carries all the guidance the agent
+#    needs.
+#
+# 2. `excluded_middleware={"TodoListMiddleware"}` — removes the `write_todos`
+#    tool and its 1370-char system-prompt addition. The TodoList prompt
+#    contains "When you finish all work, write your final answer in the
+#    message AFTER your last write_todos call" — directly mandating a
+#    two-turn finish that, on the VLAN 100 query, caused the model's
+#    comprehensive answer to be displaced by a meaningless "All done. Let
+#    me know..." closing remark in the extra turn. Tool-call agents like
+#    this one don't benefit from persistent todos (the skill content
+#    already encodes the decomposition pattern).
+_NETBOX_PROFILE = HarnessProfile(
+    base_system_prompt="",
+    excluded_middleware=frozenset({"TodoListMiddleware"}),
 )
-
-_HARNESS_PROFILE = HarnessProfile(
-    tool_description_overrides={"read_file": _READ_FILE_CORRECTED},
-    system_prompt_suffix=_FILE_PATH_SUFFIX,
-)
-# Register provider-wide for both backends this project uses (`ollama` for the
-# cloud + local Ollama path, `openai` for the llama.cpp OpenAI-compatible path).
-# Registrations are additive — these layer on top of any built-in profile.
+# Register provider-wide for both backends this project uses (`ollama` for
+# the cloud + local Ollama path, `openai` for the llama.cpp OpenAI-compatible
+# path). Registrations are additive — these layer on top of any built-in
+# profile.
 for _provider in ("ollama", "openai"):
-    register_harness_profile(_provider, _HARNESS_PROFILE)
+    register_harness_profile(_provider, _NETBOX_PROFILE)
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware
 from ..tools.netbox_tools import NetBoxToolWrapper, create_netbox_mcp_client
-from ..utils.config import NetBoxConfig, QueryMetrics, load_config
+from ..utils.config import NetBoxConfig, QueryMetrics, load_netbox_config
 from ..utils.logging import get_logger
 from .ollama_config import create_ollama_model
 from .llamacpp_config import create_llamacpp_model
@@ -197,8 +186,6 @@ class NetBoxDeepAgent:
             enable_metrics: Whether to enable metrics tracking
             backend: LLM backend to use ("ollama" or "llamacpp", defaults to env var or "ollama")
         """
-        import os
-
         self.netbox_config = netbox_config
         self.model_name = model_name
         self.skills_path = skills_path
@@ -244,13 +231,19 @@ class NetBoxDeepAgent:
         logger.info("Initializing NetBox DeepAgent")
         print("DEBUG: Starting agent initialization...", flush=True)
 
-        # Load configuration if not provided
+        # Load NetBox credentials from env if not provided. The model_name and
+        # backend params passed to __init__ are authoritative — we deliberately
+        # do NOT route through load_config() here, because OllamaConfig validates
+        # OLLAMA_MODEL against a prefix allowlist and would reject e.g. a
+        # llama.cpp GGUF filename even when the caller's `backend="llamacpp"`
+        # means OLLAMA_MODEL is irrelevant. This separation is what makes
+        # matrix-eval harnesses able to vary (backend, model_name) freely in
+        # a single process without env-var contortions.
         if not self.netbox_config:
-            print("DEBUG: Loading config...", flush=True)
-            ollama_config, netbox_config = load_config()
-            self.netbox_config = netbox_config
-            if not self.model_name:
-                self.model_name = ollama_config.model
+            print("DEBUG: Loading netbox config...", flush=True)
+            self.netbox_config = load_netbox_config()
+        if not self.model_name:
+            self.model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 
         # Create MCP client
         print("DEBUG: Creating MCP client...", flush=True)

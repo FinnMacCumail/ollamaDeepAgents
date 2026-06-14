@@ -8,7 +8,7 @@
 
 ---
 
-Spent the past few weeks devloping a fully local NetBox AI assistant using local models. Which brings privacy and no per-query bill - Using the two RTX 2080 Tis  and llama.cpp as the inference server. After experimenting with a handful of different local models I settled on Qwen3-14B-Q5_K_M for the deeper testing — best balance of tool-calling reliability and inference speed I've found on this hardware.
+I've subsequently spent the past few weeks devloping a fully local NetBox AI assistant using local models. Which brings privacy and no per-query bill - Using the two RTX 2080 Tis  and llama.cpp as the inference server. After experimenting with a handful of different local models I settled on Qwen3-14B-Q5_K_M for the deeper testing — best balance of tool-calling reliability and inference speed I've found on this hardware.
 
 The plan: feed natural-language questions about my NetBox infrastructure (*"show me devices in the Akron site"*, *"what's in the Comms closet rack?"*) into an agent built on DeepAgents 0.5.6, which calls NetBox via MCP under the hood.
 

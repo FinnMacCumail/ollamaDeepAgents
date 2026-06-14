@@ -50,7 +50,7 @@ class TestNetBoxAgentInitialization:
                 pass
 
     @pytest.mark.asyncio
-    @patch("src.agents.netbox_agent.load_config")
+    @patch("src.agents.netbox_agent.load_netbox_config")
     @patch("src.agents.netbox_agent.create_netbox_mcp_client")
     @patch("src.agents.netbox_agent.create_ollama_model")
     @patch("src.agents.netbox_agent.create_deep_agent")
@@ -59,18 +59,18 @@ class TestNetBoxAgentInitialization:
         mock_create_deep_agent,
         mock_create_ollama,
         mock_create_mcp,
-        mock_load_config,
+        mock_load_netbox_config,
         mock_netbox_config,
         mock_ollama_config,
     ):
-        """Test agent loads configuration from environment."""
-        mock_load_config.return_value = (mock_ollama_config, mock_netbox_config)
+        """Test agent loads NetBox credentials from env when not provided."""
+        mock_load_netbox_config.return_value = mock_netbox_config
         mock_create_mcp.return_value = AsyncMock()
 
         agent = NetBoxDeepAgent()  # No config provided
         await agent.initialize()
 
-        mock_load_config.assert_called_once()
+        mock_load_netbox_config.assert_called_once()
         assert agent.netbox_config == mock_netbox_config
 
 

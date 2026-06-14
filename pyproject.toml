@@ -8,7 +8,7 @@ authors = [
     { name = "NetBox DeepAgents Team" }
 ]
 dependencies = [
-    "deepagents>=0.5.6",
+    "deepagents>=0.6.10,<0.7",
     "langchain-ollama>=0.1.0",
     "langchain-openai>=0.1.0",
     "langchain-mcp-adapters>=0.1.0",
