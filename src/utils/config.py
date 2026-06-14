@@ -37,6 +37,7 @@ class OllamaConfig(BaseModel):
             "deepseek-r:",
             "deepseek-v3.1:",
             "deepseek-v4-pro:",
+            "deepseek-v4-flash:",
             "llama3.1:",
             "llama3.2:",
             "llama3:",
@@ -127,6 +128,35 @@ Query Metrics Report:
         """.strip()
 
 
+def load_netbox_config() -> NetBoxConfig:
+    """Load only NetBox connection config from env.
+
+    Use this when the caller has its own model/backend choice and only needs
+    network credentials — e.g. matrix-eval runs that vary the model
+    programmatically and must not trigger `OllamaConfig`'s prefix-validator
+    against an `OLLAMA_MODEL` env value that doesn't match the chosen backend.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    netbox_url = os.getenv("NETBOX_URL")
+    netbox_token = os.getenv("NETBOX_TOKEN")
+
+    if not netbox_url or not netbox_token:
+        raise ValueError(
+            "NETBOX_URL and NETBOX_TOKEN must be set in environment variables or .env file"
+        )
+
+    return NetBoxConfig(
+        url=netbox_url,
+        token=netbox_token,
+        mcp_server_path=os.getenv(
+            "MCP_SERVER_PATH", "/home/ola/dev/rnd/mcp/testmcp/netbox-mcp-server"
+        ),
+    )
+
+
 def load_config() -> tuple[OllamaConfig, NetBoxConfig]:
     """Load configuration from environment variables."""
     from dotenv import load_dotenv
@@ -139,20 +169,4 @@ def load_config() -> tuple[OllamaConfig, NetBoxConfig]:
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
     )
 
-    netbox_url = os.getenv("NETBOX_URL")
-    netbox_token = os.getenv("NETBOX_TOKEN")
-
-    if not netbox_url or not netbox_token:
-        raise ValueError(
-            "NETBOX_URL and NETBOX_TOKEN must be set in environment variables or .env file"
-        )
-
-    netbox_config = NetBoxConfig(
-        url=netbox_url,
-        token=netbox_token,
-        mcp_server_path=os.getenv(
-            "MCP_SERVER_PATH", "/home/ola/dev/rnd/mcp/testmcp/netbox-mcp-server"
-        ),
-    )
-
-    return ollama_config, netbox_config
+    return ollama_config, load_netbox_config()

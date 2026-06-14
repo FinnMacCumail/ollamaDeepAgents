@@ -62,3 +62,6 @@ tmp/
 # LangSmith traces (if downloaded locally)
 langsmith-traces/
 trace_analysis_report.md
+# Runtime artifacts
+conversation_history/
+large_tool_results/
