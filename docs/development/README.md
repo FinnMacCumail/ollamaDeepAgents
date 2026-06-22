@@ -20,7 +20,7 @@ This directory contains:
 - Workaround B added — 0.6 silently appends ~9.6K chars of new system-prompt content (`BASE_AGENT_PROMPT` + `TASK_SYSTEM_PROMPT` + `WRITE_TODOS_SYSTEM_PROMPT`) that actively regress quality on negative-finding queries
 - Empirical regression on `netbox-benchmark-v2` VLAN 100 query: entity 1.00→0.40, completeness 1.00→0.00. Root cause traced via sub-run chronology — penultimate LLM call had perfect answer; TodoListMiddleware's "answer-after-last-write_todos" instruction forced an extra finishing turn that produced "All done. Let me know..." overwriting it.
 - Fix: `HarnessProfile(base_system_prompt="", excluded_middleware=frozenset({"TodoListMiddleware"}))` registered for ollama and openai providers. Quality restored to 0.5.6 baseline (entity 0.95 / completeness 1.00).
-**Trade-offs:** Aggregate latency +22% (34.6s → 42.3s) concentrated on VLAN 100. Likely candidates for the residual hedging: `SubAgentMiddleware`'s prompt addition or `PatchToolCallsMiddleware`. QuickJS adoption (per `2026-06-03_quickjs-code-interpreter-research.md`) likely a better path than further prompt-suppression for cutting this.
+**Trade-offs:** Aggregate latency +22% (34.6s → 42.3s) concentrated on VLAN 100. Likely candidates for the residual hedging: `SubAgentMiddleware`'s prompt addition or `PatchToolCallsMiddleware`. (Update 2026-06-15: QuickJS spikes confirmed PTC is NOT the fix for this — the model won't use `eval` on this workload. See `2026-06-03_quickjs-code-interpreter-research.md` §16 for the actual recommended levers, starting with suppressing `SubAgentMiddleware`'s `TASK_SYSTEM_PROMPT`.)
 **Bonus:** `tests/eval/run_matrix.py` gained `EVAL_FORCE_RERUN=1` env override during this work — useful for future regression validation.
 
 ### [2026-06-08: Self-Hosting Frontier LLMs — Open Weights & GPU Rental Research](2026-06-08_self-hosting-gpu-rental-research.md)
@@ -34,15 +34,16 @@ This directory contains:
 - For single-user NetBox workload (~50-200 queries/mo), self-hosting is financially irrational vs. Ollama Cloud Pro ($30/mo) unless privacy, quota frustration, or specific model curiosity applies
 **Recommendations:** "Easiest credible spike" = 1× RTX 5090 + KTransformers (~$10 half-day cost). "Production-grade spike" = 2× H200 SGLang FP4+FP8 (~$20 half-day cost). Don't replace Ollama Cloud daily on cost grounds alone.
 
-### [2026-06-03: QuickJS Code Interpreter Middleware Research](2026-06-03_quickjs-code-interpreter-research.md)
-**Research:** Deep-dive on DeepAgents 0.6's `CodeInterpreterMiddleware` (`langchain-quickjs`) — how the embedded QuickJS VM works, how Programmatic Tool Calling (PTC) exposes existing tools as `tools.*` async functions inside the JS sandbox, and what it would take to apply it to this project's multi-call NetBox query class.
-**Key findings:**
-- Projected wall-time gain on the 70s VLAN multi-step query class: roughly halve to 20-30s by collapsing 3 of 4 prompt-decode cycles into one `eval` block
-- PTC bypasses the normal tool path — `FilterErrorRecoveryMiddleware` likely does NOT see errors from inside `eval`, requiring `try/catch` patterns in skill content as mitigation
-- MCP-adapter `BaseTool` instances probably bridge cleanly into the JS sandbox but this is unconfirmed by docs
-- Smaller local models (Qwen3 14B, etc.) may not emit reliable enough JS to benefit — must be tested per-model in the matrix
-**Integration shape:** bump to `deepagents[quickjs]>=0.6.5,<0.7`, add `CodeInterpreterMiddleware` with `ptc=[4 NetBox tools]`, `timeout=30`, `max_ptc_calls=64`, `max_result_chars=8000`. Author a separate `netbox-mcp-ptc` skill via progressive disclosure rather than rewriting the existing `netbox-mcp-filters` skill.
-**Recommendations:** three ~half-day verification spikes (MCP bridge, error recovery, single benchmark) before committing to integration. Add to model-matrix eval harness so each model is tested with and without the middleware.
+### [2026-06-03: QuickJS Code Interpreter Middleware Research + Spikes](2026-06-03_quickjs-code-interpreter-research.md)
+**Research + 3 verification spikes (executed 2026-06-15).** Deep-dive on DeepAgents 0.6's `CodeInterpreterMiddleware` (`langchain-quickjs`) PTC, followed by empirical spikes against the real NetBox MCP server on `deepseek-v4-flash:cloud`. Spike scripts in `tests/spike/`.
+**DECISION: defer adoption** — mechanism works, but no benefit for the current single-source sequential NetBox workload.
+**Spike outcomes:**
+- **Spike 1 (MCP→PTC bridge): ✅ works.** MCP tools auto-bridge as `tools.netboxGetObjects(...)` (camelCase), real round-trip, counts as one outer tool call. No adapter needed.
+- **Spike 2 (error recovery): ✅ works — prediction was wrong.** `FilterErrorRecoveryMiddleware` DOES see PTC errors (it wraps `_arun()`, which PTC calls). Bad filters surface as recoverable `TOOL_VALIDATION_ERROR` strings. No skill `try/catch` rewrite needed.
+- **Spike 3 (wall-time): ❌ no benefit.** The model **never invoked `eval`** on the VLAN 100 query (0 eval, 21 direct calls); the with-PTC variant was **+13.7% slower** purely from prompt-bloat tax. Confirms Anthropic's τ²-bench finding that sequential single-call workflows don't benefit. The original "70s → 20-30s" projection is invalidated.
+**Re-trigger conditions (§15):** re-investigate (~½ day, Spikes 1+2 don't need re-running) when the app gains ≥10 tools, ≥2 independent data sources queryable in parallel (most likely for a multi-source app), cross-source joins composed in code, or large result sets needing pre-filtering. Any future adoption must *steer* the model to `eval` via skill/prompt content — it won't use PTC on its own.
+**Residual VLAN-100 latency (§16):** PTC is not the fix. Better levers: suppress `SubAgentMiddleware`'s `TASK_SYSTEM_PROMPT` (~½ day), an MCP-server-side composite query, or teaching parallel native tool calls in the skill.
+**Notes:** `langchain-quickjs` 0.2.0 (2026-06-12) dropped `skills_backend`, added `subagents: bool = True` default `task` bridge. Open issue #3926 (PTC + `{field: undefined}` Pydantic failure) is a latent MCP risk for future adoption.
 
 ### [2026-06-03: LangSmith Evaluation Infrastructure Research](2026-06-03_langsmith-evaluation-research.md)
 **Research:** Eight LangChain offerings from Interrupt 2026 (Engine, SmithDB, Sandboxes, ADLC, Deep Agents 0.6, Managed Deep Agents, Context Hub, LangSmith UI evaluation surface) mapped to a concrete model-matrix evaluation plan for this project.
@@ -95,6 +96,7 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
 | 2026-06-08 | Self-hosting GPU rental research | [2026-06-08_self-hosting-gpu-rental-research.md](2026-06-08_self-hosting-gpu-rental-research.md) |
 | 2026-06-03 | QuickJS code interpreter middleware research | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
@@ -222,4 +224,4 @@ Currently active documents stay here for easy reference.
 ---
 
 **Maintained by:** Development team
-**Last Updated:** 2026-06-14
+**Last Updated:** 2026-06-15

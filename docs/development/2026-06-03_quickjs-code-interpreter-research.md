@@ -1,9 +1,25 @@
 # DeepAgents 0.6 Code Interpreter Middleware (QuickJS) — Research
 
-**Date:** 2026-06-03
-**Status:** Research complete, validation spike pending
+**Date:** 2026-06-03 (research) · 2026-06-15 (spikes executed) · 2026-06-22 (decision recorded)
+**Status:** ✅ Spikes complete — **DECISION: defer adoption** (mechanism works, but no benefit for the current single-source NetBox workload). Re-trigger conditions documented in §15.
 **Purpose:** Investigate whether the QuickJS-based Code Interpreter middleware shipping in DeepAgents 0.6 can materially reduce wall time on multi-call NetBox query classes (specifically the ~70-second VLAN-deployment-across-tenant-sites query), and document the integration shape + verification gates needed before adopting it
-**Related:** `2026-06-03_langsmith-evaluation-research.md` (broader LangChain ecosystem research — this doc drills into one specific feature flagged there as worth investigating)
+**Related:** `2026-06-03_langsmith-evaluation-research.md` (broader LangChain ecosystem research — this doc drills into one specific feature flagged there as worth investigating); `2026-06-14_deepagents-0.6-upgrade.md` (the upgrade that unblocked these spikes)
+
+---
+
+## TL;DR — Spike results (2026-06-15)
+
+Three verification spikes were run against the real NetBox MCP server on `deepseek-v4-flash:cloud` (DeepAgents 0.6.10 + `langchain-quickjs` 0.2.0). Scripts live in `tests/spike/`.
+
+| Spike | Question | Result |
+|---|---|---|
+| **1 — MCP→PTC bridge** | Do MCP BaseTools auto-bridge into the JS `tools.*` namespace? | ✅ **YES.** `netbox_get_objects` → `tools.netboxGetObjects(...)` (auto camelCase), full round-trip to the real MCP server, returns real NetBox data. Counts as **one** outer tool call from the agent's perspective. |
+| **2 — Error recovery** | Does `FilterErrorRecoveryMiddleware` see PTC-invoked tool errors? | ✅ **YES — unexpectedly.** Prior research predicted PTC would bypass it. It does not: the middleware wraps the tool's `_arun()` itself, and the PTC bridge calls that wrapped method. A deliberate bad filter surfaced as a `TOOL_VALIDATION_ERROR` string in the eval result, and the model recovered identically to the direct-call path. No skill-content `try/catch` rewrite needed. |
+| **3 — Wall-time delta** | Does PTC reduce wall time on the VLAN 100 multi-call query? | ❌ **NO. The model never invoked `eval` at all** (0 eval calls, 21 direct `netbox_*` calls) and the variant *with* PTC available was **+13.7% slower** (103.0s vs 90.6s) purely from the prompt-bloat tax of having `eval` in the tool surface. |
+
+**Decision: do not adopt CodeInterpreterMiddleware for the current agent.** The mechanism is sound and error semantics are preserved — but PTC's value comes from fan-out / parallelism / large-result-filtering, none of which the single-source sequential NetBox workload has. This empirically confirms Anthropic's own τ²-bench finding ("sequential single-call workflows do not benefit; ~8% more cost"). See §15 for the re-trigger conditions that would make a future re-investigation worthwhile, and §16 for what to do *instead* about the residual VLAN-100 latency.
+
+The original projection in this doc (70s → 20-30s, §6.6) is **not supported** by the empirical data and should be read as a pre-spike hypothesis, not a finding.
 
 ---
 
@@ -391,17 +407,64 @@ Steps 1-3 are independent and parallelizable. Total **~1-2 days of validation wo
 
 ---
 
-## 14. Uncertainty register
+## 14. Uncertainty register — RESOLVED (2026-06-15 spikes)
 
-| Item | Confidence | How to resolve |
+| Item | Pre-spike confidence | Spike outcome |
 |---|---|---|
-| MCP-adapter `BaseTool` instances bridge through PTC automatically | **Medium** (shape suggests yes; docs don't confirm) | Spike 1 |
-| `FilterErrorRecoveryMiddleware` observes PTC-invoked tool errors | **Low** (docs explicitly say PTC bypasses normal tool path) | Spike 2 — likely answer is NO; mitigation is skill content |
-| Our specific Ollama/llama.cpp models reliably emit valid JS against `tools.*` | **Low** (model-dependent; LangChain examples use frontier-only) | Spike 3 + ongoing eval-matrix data |
-| `RubricMiddleware`, sandbox middlewares, etc. could substitute for PTC | **High** (they don't — they target different axes) | None — comparison already done in §9 |
-| QuickJS heap default (64 MB) is sufficient for NetBox JSON payloads | **High** (NetBox responses are KB-scale; 64 MB is enormous) | None |
-| Snapshot-restore preserves NetBox JSON values across turns | **High** (NetBox JSON is plain serializable) | None |
+| MCP-adapter `BaseTool` instances bridge through PTC automatically | Medium | ✅ **CONFIRMED** (Spike 1) — auto camelCase naming, no adapter needed, real MCP round-trip |
+| `FilterErrorRecoveryMiddleware` observes PTC-invoked tool errors | Low (predicted NO) | ✅ **CONFIRMED YES** (Spike 2) — prediction was wrong; middleware wraps `_arun()`, which PTC calls. No skill rewrite needed. |
+| `deepseek-v4-flash:cloud` reliably emits valid JS against `tools.*` | Low | ◑ **MOOT** (Spike 3) — when *told* to (Spikes 1+2) it produced correct JS first try; but left to its own devices on a real query it **never chose `eval`**, so JS-fluency was never the bottleneck. The bottleneck is "the model has no reason to use PTC for this workload shape." |
+| `RubricMiddleware`, sandbox middlewares could substitute for PTC | High | Unchanged — §9 comparison stands |
+| QuickJS heap default (64 MB) sufficient for NetBox JSON | High | Unchanged — never approached the limit |
+| Snapshot-restore preserves NetBox JSON across turns | High | Untested — irrelevant once adoption deferred |
+
+New uncertainty surfaced during spikes:
+
+| Item | Status |
+|---|---|
+| `langchain-quickjs` 0.2.0 (2026-06-12) dropped `skills_backend`, added `subagents: bool = True` default `task` bridge | Confirmed by installed-package inspection. The `subagents` param auto-exposes `task(...)` in JS when a `task` tool exists — set `subagents=False` to suppress (the spike scripts do). |
+| Open issue #3926: PTC calls with `{ field: undefined }` fail Pydantic validation | Not hit in spikes (the model omitted keys rather than setting them `undefined`), but a real risk for MCP tools with optional fields if PTC is adopted later. Skill content would need to teach "omit, don't `undefined`." |
 
 ---
 
-**Recommended next step:** sequence the three spikes (§12 steps 1-3) as a single ~1-2 day investigation block. The outcome of all three together determines whether to proceed with integration. If any one fails decisively, the decision becomes a defer rather than a no — the failures are technically resolvable (write an MCP adapter; rebuild error recovery for JS; route smaller models away from `eval`) but the cumulative cost may exceed the wall-time saving on the VLAN query class.
+## 15. Decision and re-trigger conditions
+
+**Decision (2026-06-22): defer adoption.** The mechanism works and is cheap to re-test later (Spikes 1+2 answered the structural "does it work" questions permanently — only Spike 3's "does it help *this* workload" is workload-dependent). For the current **single-source, sequential, 4-tool** NetBox agent, PTC adds latency (+13.7%) without the model even using it.
+
+**Re-investigate PTC when any one of these becomes true** — each shifts the workload toward the fan-out / parallelism / large-result shapes where PTC's value actually lives:
+
+| Trigger | Why it changes the math | Anchor |
+|---|---|---|
+| **Tool count crosses ~10** | Anthropic measured token savings of 20-40% starting at 10-49 tool definitions; below that, no benefit | Anthropic PTC docs (τ²-bench + production traffic) |
+| **≥2 independent data sources queryable in parallel** | e.g. "check NetBox AND Grafana AND ServiceNow for device X" — PTC's `await Promise.all([...])` fan-out is the canonical win case. **This is the most likely trigger for a multi-source app.** | §3 (parallel decomposition pattern) |
+| **Cross-source joins composed in code** | e.g. "correlate NetBox interfaces with Prometheus metrics" — stitch results in JS instead of round-tripping each intermediate through the model | §3 (recursive workflows) |
+| **Large result sets needing pre-filtering** | filter/aggregate 100s of rows in JS before the model sees them — keeps fat payloads out of context | §1 (token-optimization rationale) |
+
+**When a trigger fires, the re-investigation is ~½ day, not 1.5 days** — only a Spike-3-equivalent (does the model use it + is there a wall-time win) plus the steering work below. Spikes 1 and 2 do not need re-running.
+
+**Critical caveat for any future adoption — the model must be *steered* to PTC.** In Spike 3 the model ignored `eval` entirely because nothing told it to prefer it: `NETBOX_SYSTEM_PROMPT` and the `netbox-mcp-filters` skill both teach direct `netbox_*` tool calls. Adoption is therefore not "drop in the middleware" — it requires:
+1. A `netbox-mcp-ptc` skill (or system-prompt section) that explicitly tells the model: "for queries that fan out across ≥N independent lookups, use the `eval` tool to issue them in parallel via `Promise.all`."
+2. Skill content teaching the `{ field: undefined }` avoidance pattern (issue #3926).
+3. Re-running the model-matrix eval (per `2026-06-03_langsmith-evaluation-research.md`) with/without the middleware per model — smaller local models may regress where frontier models gain.
+
+---
+
+## 16. What to do *instead* about the residual VLAN-100 latency
+
+Spike 3 confirmed PTC is **not** the fix for the slow VLAN-100 query (it ran at ~90s with PTC available and the model didn't use it; the 0.6 upgrade had already regressed this query class from a ~36s 0.5.6 baseline). The wall-time problem is real but unrelated to PTC. Better candidate levers, in order of cost:
+
+1. **Suppress `SubAgentMiddleware`'s prompt addition (~½ day).** Workaround B (see `2026-06-14_deepagents-0.6-upgrade.md`) suppressed `BASE_AGENT_PROMPT` and removed `TodoListMiddleware`, but `SubAgentMiddleware`'s 2,144-char `TASK_SYSTEM_PROMPT` is **still appended** and may be feeding the over-exploration / search-hedging seen on negative-finding queries. Test: add `"SubAgentMiddleware"` to the `excluded_middleware` frozenset, re-run VLAN 100, measure. Cheap and user-facing.
+2. **MCP-server-side composite query.** Add a NetBox MCP tool that performs "tenant → sites → VLANs → IP allocations" in one server-side round-trip. Collapses the whole multi-call decomposition into a single tool call — bigger win than PTC would have delivered, and no model-steering required.
+3. **Teach parallel native tool calls in the skill.** The model already supports parallel tool calls when lookups are independent; the skill could explicitly instruct "fire independent lookups in the same turn." Achieves much of PTC's fan-out benefit without the middleware.
+
+---
+
+## 17. Spike artifacts
+
+Reproducible scripts committed under `tests/spike/`:
+
+- `spike1_mcp_ptc_bridge.py` — builds an agent with `CodeInterpreterMiddleware(ptc=<4 NetBox tools>)`, asks the model to make one trivial `eval` call, verifies the MCP round-trip.
+- `spike2_ptc_error_recovery.py` — fires a deliberate invalid filter through PTC (naked + `try/catch` variants), verifies `FilterErrorRecoveryMiddleware` still produces a recoverable `TOOL_VALIDATION_ERROR`.
+- `spike3_vlan_walltime.py` — runs the VLAN 100 query with and without the middleware on `deepseek-v4-flash:cloud`, reports wall-time delta and which mechanism (eval vs direct) the model chose.
+
+Run any with `./venv/bin/python -m tests.spike.spike<N>_*`. They require the NetBox MCP server reachable at `localhost:8000` and `OLLAMA_*` / `NETBOX_*` env set (same as the app).
