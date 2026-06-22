@@ -35,7 +35,7 @@ Detailed report of cloud vs local AI comparison:
 
 ### telegram-post.md & telegram-report.md
 - Written for early prototype (LangChain + Ollama, no DeepAgents)
-- Current implementation uses DeepAgents 0.5.6
+- Current implementation uses DeepAgents 0.6.10
 - Performance characteristics have changed significantly
 - Still useful for understanding project evolution
 

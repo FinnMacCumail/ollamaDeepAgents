@@ -88,15 +88,23 @@ Processing pipeline for requests and responses:
    - Monitors success rates
    - Records token usage
 
-3. **TokenOptimizationMiddleware**
-   - Truncates verbose responses
-   - Reduces context usage
-   - Maintains conversation efficiency
+3. **QueryMetricsMiddleware**
+   - Per-query metrics capture
 
-4. **SummarizationMiddleware** (built-in)
+4. **SummarizationMiddleware** (built-in, auto-added)
    - Manages conversation history
    - Offloads old messages
    - Prevents context overflow
+
+> **Removed:** `TokenOptimizationMiddleware` (commit `01df4e9`) — it head-truncated tool
+> results and skill bodies to ~4000 chars, silently breaking skill loading. The built-in
+> `SummarizationMiddleware` handles real context overflow correctly.
+
+**HarnessProfile (Workaround B, added on the 0.6.10 upgrade)** — registered for the
+`ollama` and `openai` providers. Suppresses two pieces of 0.6's default behaviour that
+regress quality on negative-finding queries: `base_system_prompt=""` (overrides
+`BASE_AGENT_PROMPT`) and `excluded_middleware={"TodoListMiddleware"}`. See
+`docs/development/2026-06-14_deepagents-0.6-upgrade.md`.
 
 ### 6. MCP Tools
 
@@ -205,23 +213,23 @@ devices = get_devices(site_id=site.id)
 | Tool Definitions | 200 | Always |
 | Conversation | Variable | Managed |
 
-### Response Times
+### Measured Performance
 
-| Operation | Time | Notes |
-|-----------|------|-------|
-| Simple Query | <2s | Direct filter |
-| Two-Step Query | 3-5s | Relationship |
-| Search Query | 2-4s | Pattern match |
-| Complex Query | 5-10s | Multi-step |
+Performance is measured empirically by the model-matrix eval harness (`tests/eval/`) against
+the fixed `netbox-benchmark-v2` dataset, not estimated. Representative wall times for the default
+`deepseek-v4-flash:cloud` (these are model- and load-dependent — re-run the harness for current
+figures):
 
-### Success Rates
+| Query class | Wall time (approx) | Tool calls |
+|---|---|---|
+| Single-object (e.g. rack elevation) | ~15-35s | 4-6 |
+| Device-detail (multi-aspect) | ~15-20s | 5-7 |
+| Cross-relationship (VLAN across tenant sites) | ~55-90s | 8-21 |
+| Multi-aspect tenant (14-site enumeration) | ~35-50s | 7-11 |
 
-| Query Type | Baseline | With Recovery |
-|------------|----------|---------------|
-| Direct Filters | 95% | 98% |
-| Relationships | 40% | 90% |
-| Pattern Search | 60% | 95% |
-| Complex | 50% | 85% |
+Quality (entity coverage / completeness) for the default model on these queries is ~0.95 / ~1.00.
+See `docs/development/2026-06-14_deepagents-0.6-upgrade.md` for the latest baselines and the
+LangSmith experiment IDs.
 
 ## Security Considerations
 

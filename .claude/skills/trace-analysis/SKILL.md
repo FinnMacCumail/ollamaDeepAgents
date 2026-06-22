@@ -52,7 +52,7 @@ LANGSMITH_API_KEY=<key> /home/ola/.local/bin/langsmith run get <run-id-2> \
 **Note:** Get the API key from the .env file:
 ```bash
 grep LANGCHAIN_API_KEY .env
-# Use: LANGCHAIN_API_KEY=lsv2_pt_REDACTED
+# Use: LANGCHAIN_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxx_xxxxxxxxxx
 ```
 
 ### 3. Analyze the Trace Data
@@ -191,7 +191,7 @@ Always source the .env file or use the API key directly:
 source .env
 
 # Option 2: Use API key directly (recommended)
-LANGSMITH_API_KEY=lsv2_pt_REDACTED
+LANGSMITH_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxx_xxxxxxxxxx
 ```
 
 ## Quick Command Reference

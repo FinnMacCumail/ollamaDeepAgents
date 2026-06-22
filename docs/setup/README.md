@@ -34,11 +34,14 @@ Choose one:
 
 **Option A: Ollama Cloud (Best quality, easiest setup — paid subscription)**
 ```bash
-ollama signin                                  # one-time browser auth
-ollama run deepseek-v4-pro:cloud "say hello"   # smoke-test
-# Set LLM_BACKEND=ollama and OLLAMA_MODEL=deepseek-v4-pro:cloud in .env.
+ollama signin                                    # one-time browser auth
+ollama run deepseek-v4-flash:cloud "say hello"   # smoke-test
+# Set LLM_BACKEND=ollama and OLLAMA_MODEL=deepseek-v4-flash:cloud in .env.
 # See ollama-cloud.md for full details.
 ```
+> `deepseek-v4-flash:cloud` is the current default — the model-matrix eval found it
+> matches `deepseek-v4-pro:cloud` on answer quality while running ~36% faster. Use
+> `pro` only if a future eval shows a quality gap on your queries.
 
 **Option B: llama.cpp (Best privacy — fully local)**
 ```bash
@@ -63,7 +66,7 @@ python -m src.main
 
 ### Core Configuration
 
-- **[Ollama Cloud Setup](ollama-cloud.md)** - Use frontier models (e.g. `deepseek-v4-pro:cloud`) via Ollama Cloud
+- **[Ollama Cloud Setup](ollama-cloud.md)** - Use frontier models (default `deepseek-v4-flash:cloud`) via Ollama Cloud
   - Subscription requirements
   - Sign-in and `.env` configuration
   - Switching back to local
@@ -91,7 +94,8 @@ python -m src.main
 ### Best Quality (Cloud — paid)
 ```env
 LLM_BACKEND=ollama
-OLLAMA_MODEL=deepseek-v4-pro:cloud          # Frontier MoE via Ollama Cloud
+OLLAMA_MODEL=deepseek-v4-flash:cloud        # Default: matches pro quality, ~36% faster
+# OLLAMA_MODEL=deepseek-v4-pro:cloud        # Alternative: 1.6T frontier MoE, slower
 LANGCHAIN_TRACING_V2=true                   # Enable tracing
 ```
 

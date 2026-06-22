@@ -57,4 +57,4 @@ When adding documentation:
 
 **Project:** NetBox DeepAgents
 **Backend:** llama.cpp (default) or Ollama
-**Framework:** DeepAgents 0.5.6
+**Framework:** DeepAgents 0.6.10

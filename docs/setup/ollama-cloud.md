@@ -1,22 +1,22 @@
 # Ollama Cloud Setup
 
-Run the agent against frontier-scale models hosted by Ollama (e.g. `deepseek-v4-pro:cloud` — 1.6T params, 49B active, 1M-token context). The local Ollama daemon transparently proxies `:cloud`-suffixed model names to `ollama.com`, so the rest of the stack (`langchain-ollama`, DeepAgents, MCP) is unchanged.
+Run the agent against frontier-scale models hosted by Ollama. The current default is `deepseek-v4-flash:cloud` (284B params, 13B active, 1M-token context) — the model-matrix eval found it matches the larger `deepseek-v4-pro:cloud` (1.6T/49B) on answer quality while running ~36% faster. The local Ollama daemon transparently proxies `:cloud`-suffixed model names to `ollama.com`, so the rest of the stack (`langchain-ollama`, DeepAgents, MCP) is unchanged.
 
 **Trade-off:** Queries and tool results leave the machine. Use the [llama.cpp setup](llamacpp.md) instead for privacy-critical environments.
 
 ## Prerequisites
 
 1. **Ollama daemon running locally.** Confirm with `curl http://localhost:11434/api/tags`.
-2. **Ollama Cloud Pro subscription.** Free tier does not unlock `deepseek-v4-pro:cloud`. Subscribe at [ollama.com/upgrade](https://ollama.com/upgrade) ($20/mo or $200/yr).
+2. **Ollama Cloud Pro subscription.** Free tier does not unlock `:cloud` frontier models. Subscribe at [ollama.com/upgrade](https://ollama.com/upgrade) ($20/mo or $200/yr). Note: the Pro tier has rolling session + weekly usage limits — a full 10-model eval-matrix sweep can exhaust the session window; see `docs/development/2026-06-14_deepagents-0.6-upgrade.md` and the eval harness notes.
 3. **Signed in.** Run `ollama signin` (one-time browser auth).
 
 ## Smoke test
 
 ```bash
-ollama run deepseek-v4-pro:cloud "say hello"
+ollama run deepseek-v4-flash:cloud "say hello"
 ```
 
-Expected: a response. If you get `403 Forbidden: this model requires a subscription`, the subscription hasn't activated yet — wait a minute and retry, or check `ollama.com/settings`.
+Expected: a response. If you get `403 Forbidden: this model requires a subscription`, the subscription hasn't activated yet — wait a minute and retry, or check `ollama.com/settings`. A `404 model ... not found` means that specific `:cloud` model isn't in your subscription's catalog.
 
 ## Configuration
 
@@ -25,15 +25,14 @@ Edit `.env`:
 ```bash
 LLM_BACKEND=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=deepseek-v4-pro:cloud
+OLLAMA_MODEL=deepseek-v4-flash:cloud
 OLLAMA_TEMPERATURE=0.0
 ```
 
 Then start the agent:
 
 ```bash
-source venv/bin/activate
-python -m src.main
+./venv/bin/python -m src.main
 ```
 
 No code changes are needed — `src/agents/ollama_config.py` detects the `:cloud` suffix and:
@@ -46,12 +45,13 @@ No code changes are needed — `src/agents/ollama_config.py` detects the `:cloud
 
 Per Ollama's catalog (subject to change — check [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud)):
 
+- `deepseek-v4-flash:cloud` — **default**, 284B/13B MoE, matches pro quality at ~36% lower latency
 - `deepseek-v4-pro:cloud` — 1.6T MoE, strong tool calling, 1M context
-- `qwen3-coder:480b-cloud` — coding-specialised
-- `gpt-oss:120b-cloud`, `gpt-oss:20b-cloud` — open weights baselines
-- `deepseek-v3.1:671b-cloud` — older-generation reference
+- `glm-5:cloud` — 744B/40B MoE, fastest in the eval matrix (LangChain's own DeepAgents reference model)
+- `kimi-k2.6:cloud`, `minimax-m3:cloud`, `nemotron-3-ultra:cloud` — other frontier options scored in the matrix
+- `gpt-oss:120b-cloud` — open-weights baseline
 
-The Pydantic validator at `src/utils/config.py` accepts these prefixes; add new ones to `allowed_prefixes` if you experiment with others.
+These were all benchmarked in the 10-model cloud sweep — see `docs/development/2026-06-14_deepagents-0.6-upgrade.md` and the `netbox-benchmark-v2` results. The Pydantic validator at `src/utils/config.py` gates `OLLAMA_MODEL` against an `allowed_prefixes` list (currently `gpt-oss:`, `qwen2.5:`, `qwen2:`, `qwen3-coder:`, `deepseek-r1:`, `deepseek-r:`, `deepseek-v3.1:`, `deepseek-v4-pro:`, `deepseek-v4-flash:`, `llama3.1:`, `llama3.2:`, `llama3:`, `mixtral:`). Add new prefixes there, or set `DEBUG=true` to bypass validation. Note: the **eval harness** (`tests/eval/run_matrix.py`) bypasses this validator entirely via `load_netbox_config()`, so it can test arbitrary models without editing the allowlist.
 
 ## Switching back to local
 

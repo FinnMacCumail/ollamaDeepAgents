@@ -49,7 +49,7 @@ Both projects share the same LangSmith configuration pattern:
 ```env
 # LangSmith Tracing
 LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=lsv2_pt_REDACTED
+LANGCHAIN_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxx_xxxxxxxxxx
 LANGCHAIN_PROJECT=netbox-chatbox  # or netbox-chat-ollama
 ```
 

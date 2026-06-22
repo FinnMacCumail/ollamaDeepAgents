@@ -128,20 +128,29 @@ random-model:123  # Not in supported families
 The system validates model names using **prefix matching**:
 
 ```python
+# src/utils/config.py — OllamaConfig.validate_model()
 allowed_prefixes = [
-    "gpt-oss:",      # Keep for reference (not recommended)
-    "qwen2.5:",      # Recommended
-    "qwen2:",        # Support older versions
-    "deepseek-r1:",  # Recommended for reasoning
-    "deepseek-r:",   # Support variants
-    "llama3.1:",     # Well-tested
-    "llama3.2:",     # Newer variants
-    "llama3:",       # Generic llama3
-    "mixtral:",      # Fast fallback
+    "gpt-oss:",
+    "qwen2.5:",
+    "qwen2:",
+    "qwen3-coder:",
+    "deepseek-r1:",
+    "deepseek-r:",
+    "deepseek-v3.1:",
+    "deepseek-v4-pro:",
+    "deepseek-v4-flash:",   # current default family
+    "llama3.1:",
+    "llama3.2:",
+    "llama3:",
+    "mixtral:",
 ]
 ```
 
-Any model starting with these prefixes is accepted, including all quantization variants.
+Any model starting with these prefixes is accepted, including `:cloud` suffixed Ollama Cloud
+variants and all quantization variants. To use a model whose prefix isn't listed, either add the
+prefix here or set `DEBUG=true` to bypass validation. **The eval harness
+(`tests/eval/run_matrix.py`) bypasses this validator entirely** via `load_netbox_config()`, so it
+can score arbitrary models without editing the allow-list.
 
 ## Configuration
 
@@ -185,27 +194,32 @@ OLLAMA_MODEL=any-model-name:variant
 
 ## Testing Model Compatibility
 
-### Quick Test
+### Quick Test (model connectivity)
 
 ```bash
-source venv/bin/activate
-python test_connection.py
+./venv/bin/python -c "
+from src.agents.ollama_config import create_ollama_model
+m = create_ollama_model('gpt-oss:20b')  # or your OLLAMA_MODEL
+print(m.invoke('reply with OK').content)
+"
 ```
 
 ### Full Query Test
 
 ```bash
-source venv/bin/activate
-python -m src.main
+./venv/bin/python -m src.main
 # Then type: "Show me all sites in NetBox"
 ```
 
-### Direct Tool Test
+### Example Scripts
 
 ```bash
-source venv/bin/activate
-python test_tool_direct.py
+./venv/bin/python examples/basic_usage.py
+./venv/bin/python examples/failed_query_recovery.py
 ```
+
+> A reproducible spike harness for direct MCP/PTC tool tests lives in `tests/spike/`
+> (e.g. `./venv/bin/python -m tests.spike.spike1_mcp_ptc_bridge`).
 
 ## Performance Comparison
 
@@ -265,7 +279,7 @@ ollama pull qwen2.5:32b-instruct-q4_K_M
 
 3. **Test:**
    ```bash
-   python test_connection.py
+   ./venv/bin/python -c "from src.agents.ollama_config import create_ollama_model; print(create_ollama_model('qwen2.5:32b-instruct-q4_K_M').invoke('OK').content)"
    ```
 
 4. **Verify:**

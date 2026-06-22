@@ -1,52 +1,54 @@
-# NetBox DeepAgents Query System with Ollama
+# NetBox DeepAgents Query System
 
-An intelligent NetBox infrastructure query system using DeepAgents framework with Ollama for local LLM inference. This system overcomes critical MCP filter constraints through automatic error recovery and progressive knowledge disclosure.
+An intelligent NetBox infrastructure query system built on the **DeepAgents 0.6** framework. It
+answers natural-language questions against NetBox data, working around the NetBox MCP server's
+strict filter constraints through automatic error recovery and progressive knowledge disclosure.
+
+Inference runs through one of two interchangeable backends (one-line `.env` switch):
+- **Ollama** — local models *and* Ollama Cloud frontier models (`:cloud`). Default:
+  `deepseek-v4-flash:cloud`.
+- **llama.cpp** — OpenAI-compatible server for the fully-local / privacy-critical path.
 
 ## 🎯 Key Features
 
-- **85%+ Success Rate**: Improved from 71.4% baseline on previously failing queries
-- **Local LLM Inference**: Complete data privacy with Ollama
-- **Automatic Filter Recovery**: Handles MCP constraints intelligently
-- **Progressive Skills System**: Loads domain knowledge just-in-time
-- **Token Optimization**: 60-70% reduction through middleware
-- **Real-time Streaming**: Responsive conversational interface
+- **Dual backend**: Ollama (local + Cloud) or llama.cpp, selected via `LLM_BACKEND`
+- **Automatic Filter Recovery**: converts MCP filter violations into recoverable structured errors
+- **Progressive Skills System**: loads NetBox domain knowledge just-in-time
+- **Model-matrix evaluation**: LangSmith-based harness (`tests/eval/`) scoring models on a fixed benchmark
+- **Real-time Streaming**: responsive conversational interface
+
+> **Privacy note:** the default Ollama Cloud path sends queries and tool results to `ollama.com`.
+> Use the [llama.cpp backend](docs/setup/llamacpp.md) for data-never-leaves-the-box operation.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- Ollama installed and running
-- NetBox instance with API access
-- MCP server (optional)
+- NetBox instance with API access + the NetBox MCP server
+- One inference backend: Ollama (local daemon and/or Cloud Pro subscription) **or** a llama.cpp server
 
 ### Installation
 
-1. Clone the repository:
+1. Clone and install:
 ```bash
 git clone https://github.com/yourusername/netbox-deepagents-ollama.git
 cd netbox-deepagents-ollama
+pip install -e .                     # pulls deepagents>=0.6.10
 ```
 
-2. Install dependencies:
+2. Pick a backend and model:
 ```bash
-pip install -e .
+# Ollama Cloud (default): see docs/setup/ollama-cloud.md
+ollama signin && ollama run deepseek-v4-flash:cloud "hi"
+# or a local Ollama model:  ollama pull qwen2.5:32b
+# or llama.cpp:             see docs/setup/llamacpp.md
 ```
 
-3. Pull Ollama model:
+3. Configure environment, then run:
 ```bash
-ollama pull qwen2.5:32b
-```
-
-4. Configure environment:
-```bash
-cp .env.example .env
-# Edit .env with your NetBox URL and API token
-```
-
-5. Run the application:
-```bash
-python -m src.main
+cp .env.example .env                 # edit with your values
+./venv/bin/python -m src.main
 ```
 
 ## 📋 Configuration
@@ -54,18 +56,31 @@ python -m src.main
 Create a `.env` file with:
 
 ```env
-# NetBox Configuration
+# Backend selection
+LLM_BACKEND=ollama                       # ollama | llamacpp
+
+# NetBox
 NETBOX_URL=http://localhost:8000
 NETBOX_TOKEN=your-netbox-api-token
+MCP_SERVER_PATH=/path/to/netbox-mcp-server
 
-# Ollama Configuration
-OLLAMA_MODEL=qwen2.5:32b
+# Ollama (local + cloud)
+OLLAMA_MODEL=deepseek-v4-flash:cloud     # default; gpt-oss:20b if unset
 OLLAMA_BASE_URL=http://localhost:11434
 
-# Optional
-LOG_LEVEL=INFO
-DEBUG=false
+# llama.cpp backend (when LLM_BACKEND=llamacpp)
+LLAMACPP_BASE_URL=http://localhost:8080/v1
+LLAMACPP_MODEL=Qwen_Qwen3-14B-Q5_K_M.gguf
+
+# LangSmith tracing (optional; never commit a real key)
+LANGCHAIN_API_KEY=lsv2_pt_xxxxxxxx
+LANGCHAIN_TRACING_V2=true
+
+# Dev
+DEBUG=false                              # DEBUG=true bypasses the model-prefix validator
 ```
+
+See `docs/setup/` for backend-specific guides (Ollama Cloud, llama.cpp, LangSmith).
 
 ## 💡 Usage Examples
 
@@ -157,61 +172,75 @@ cables = netbox_get_objects("dcim.cable", {"device_id": device['id']})
 
 ## 📊 Performance Metrics
 
-| Metric | Baseline | Current | Target |
-|--------|----------|---------|--------|
-| Success Rate | 71.4% | 85%+ | 95% |
-| Filter Errors | 28.6% | <10% | <5% |
-| Token Usage | High | -60% | -70% |
-| Response Time | Variable | <5s | <3s |
+Quality and latency are now measured empirically by the model-matrix eval harness against the
+fixed `netbox-benchmark-v2` dataset, not estimated. Representative result for the default model
+(`deepseek-v4-flash:cloud`): entity-coverage ~0.95, completeness ~1.00 across the four benchmark
+queries; per-query wall time ranges from ~15s (single-object) to ~90s (multi-aspect / cross-
+relationship). See `tests/eval/` and the experiment results on LangSmith, plus
+`docs/development/2026-06-14_deepagents-0.6-upgrade.md` for the latest measured baselines.
 
 ## 🏗️ Architecture
 
 ```
 ├── src/
-│   ├── agents/          # DeepAgents implementation
-│   │   ├── netbox_agent.py
-│   │   └── ollama_config.py
-│   ├── skills/          # Progressive knowledge system
-│   │   └── netbox-mcp-filters/
-│   ├── middleware/      # Error recovery & optimization
-│   │   ├── filter_recovery.py
-│   │   └── metrics.py
-│   └── tools/          # MCP tool wrappers
-│       └── netbox_tools.py
+│   ├── main.py              # CLI entry point
+│   ├── agents/              # Agent factory + backend model setup
+│   │   ├── netbox_agent.py  #   core factory + HarnessProfile (Workaround B)
+│   │   ├── ollama_config.py #   Ollama (local + :cloud)
+│   │   └── llamacpp_config.py
+│   ├── middleware/          # filter_recovery.py, metrics.py
+│   ├── tools/               # netbox_tools.py (MCP client, validator)
+│   ├── skills/              # netbox-mcp-filters/ (progressive disclosure)
+│   └── utils/               # config.py, logging.py
+├── tests/
+│   ├── eval/                # model-matrix evaluation harness (LangSmith)
+│   ├── spike/               # QuickJS PTC verification spikes
+│   └── test_*.py            # unit / integration tests
+└── docs/                    # development/, setup/, guides/, reference/, traces/
 ```
 
 ### Key Components
 
-- **DeepAgents Framework**: Advanced reasoning and planning
-- **Ollama Integration**: Local LLM inference
-- **Skills System**: Just-in-time knowledge loading
-- **Recovery Middleware**: Automatic error handling
-- **MCP Tools**: NetBox API integration
+- **DeepAgents 0.6 framework** with a custom middleware stack + Workaround-B HarnessProfile
+- **Dual backend**: Ollama (local + Cloud) / llama.cpp
+- **Skills System**: just-in-time NetBox knowledge loading
+- **Recovery Middleware**: filter violations → recoverable structured errors
+- **Eval harness**: LangSmith model-matrix scoring (`tests/eval/`)
+
+See [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) for the full architecture.
 
 ## 🧪 Testing
 
 Run the test suite:
 
 ```bash
-# All tests
-pytest tests/ -v
+# Unit / integration tests
+./venv/bin/python -m pytest tests/test_filters.py -v             # Filter validator
+./venv/bin/python -m pytest tests/test_netbox_integration.py -v  # Agent init + query
+./venv/bin/python -m pytest tests/test_ollama_models.py -v       # Model compatibility
 
-# Specific test categories
-pytest tests/test_filters.py -v        # Filter validation
-pytest tests/test_ollama_models.py -v  # Model tests
-pytest tests/test_netbox_integration.py -v  # Integration
-
-# With coverage
-pytest tests/ --cov=src --cov-report=term-missing
+# Model-matrix evaluation (LangSmith) — quality gate after agent changes
+./venv/bin/python -m tests.eval.run_matrix
+EVAL_FORCE_RERUN=1 EVAL_MODELS="ollama:deepseek-v4-flash:cloud" \
+  ./venv/bin/python -m tests.eval.run_matrix   # single-model regression check
 ```
+
+The eval harness scores models against the fixed `netbox-benchmark-v2` dataset
+(entity coverage, completeness, tool-call efficiency). See `tests/eval/` and
+`docs/development/2026-06-03_langsmith-evaluation-research.md`.
 
 ## 🤖 Supported Models
 
-Tested with:
-- **qwen2.5:32b** - Best balance (recommended)
-- **deepseek-r1:70b** - Superior reasoning
-- **llama3.1:70b** - Good performance
-- **mixtral:8x7b** - Fast fallback
+Selected via `OLLAMA_MODEL` (or `--model`). Benchmarked in the 10-model cloud sweep:
+- **deepseek-v4-flash:cloud** — default; matches `pro` quality at ~36% lower latency
+- **deepseek-v4-pro:cloud** — 1.6T frontier MoE
+- **glm-5:cloud** — fastest in the matrix (LangChain's DeepAgents reference model)
+- **kimi-k2.6:cloud**, **minimax-m3:cloud**, **nemotron-3-ultra:cloud** — other frontier options
+- Local models (Ollama / llama.cpp): **qwen2.5:32b**, **gpt-oss:20b**, etc. — viable but the
+  matrix shows frontier models are needed for the hardest multi-aspect queries.
+
+The model-prefix validator in `src/utils/config.py` gates `OLLAMA_MODEL`; add prefixes there or
+set `DEBUG=true` to experiment with others.
 
 ## 🔍 Troubleshooting
 
@@ -278,4 +307,8 @@ MIT License - See LICENSE file for details
 
 ---
 
-**Note:** This project addresses critical limitations in NetBox MCP server filter handling, achieving 85%+ success rate on queries that fail in baseline implementations.
+**Note:** This project addresses critical limitations in NetBox MCP server filter handling —
+queries that fail in naive implementations succeed here via the `FilterValidator` + automatic
+error recovery and the progressive-disclosure skills system. Quality is tracked empirically by
+the `tests/eval/` model-matrix harness. See [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md)
+for the architecture and engineering conventions.

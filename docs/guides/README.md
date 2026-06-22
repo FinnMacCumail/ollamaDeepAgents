@@ -24,6 +24,33 @@ Detailed assessment of LangSmith Skills capabilities:
 
 **When to use:** Deciding whether to install LangSmith Skills, understanding their value
 
+### Model-Matrix Evaluation Harness (`tests/eval/`)
+
+The primary quality gate — replaces the old "fetch trace, eyeball JSON, write a markdown report"
+loop with automated scoring on a fixed dataset.
+
+```bash
+# Score the default model set against netbox-benchmark-v2
+./venv/bin/python -m tests.eval.run_matrix
+
+# Score specific models
+EVAL_MODELS="ollama:deepseek-v4-flash:cloud,ollama:glm-5:cloud" \
+  ./venv/bin/python -m tests.eval.run_matrix
+
+# Regression check after an agent change (bypass skip-completed)
+EVAL_FORCE_RERUN=1 EVAL_MODELS="ollama:deepseek-v4-flash:cloud" \
+  ./venv/bin/python -m tests.eval.run_matrix
+```
+
+Components: `dataset.py` (the `netbox-benchmark-v2` queries + ground-truth entities),
+`evaluators.py` (`entity_coverage`, `completeness_judge`, `tool_call_efficiency`),
+`run_matrix.py` (per-model runner with skip-completed + fail-fast-on-429). Results land as
+LangSmith experiments; compare them in the LangSmith UI. Background:
+`docs/development/2026-06-03_langsmith-evaluation-research.md`.
+
+**When to use:** After any framework, middleware, skill, prompt, or validator change — confirm
+quality holds vs the baseline before merging.
+
 ## Common Tasks
 
 ### Analyzing Performance
@@ -48,12 +75,13 @@ Detailed assessment of LangSmith Skills capabilities:
 3. Consider using smaller models for simple queries
 4. Leverage prompt caching (automatic in llama.cpp)
 
-### Comparing Backends
+### Comparing Backends / Models
 
-1. Configure both backends (see [Setup](../setup/README.md))
-2. Run identical queries on each
-3. Compare traces in LangSmith
-4. See [Model Compatibility](../reference/model-compatibility.md) for benchmarks
+1. Configure the backend(s) (see [Setup](../setup/README.md))
+2. Run the eval harness across the models you want to compare
+   (`EVAL_MODELS="ollama:model-a,ollama:model-b" ./venv/bin/python -m tests.eval.run_matrix`)
+3. Compare the resulting experiments in the LangSmith UI (leaderboard view)
+4. See [Model Compatibility](../reference/model-compatibility.md) for the validator allow-list
 
 ## Advanced Topics
 
@@ -109,4 +137,4 @@ When adding new guides:
 
 ---
 
-**Last Updated:** 2026-05-05
+**Last Updated:** 2026-06-22

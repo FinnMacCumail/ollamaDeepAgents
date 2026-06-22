@@ -189,7 +189,7 @@ if config.langchain_tracing_v2:
 
 **DeepAgents (.env):**
 ```bash
-LANGCHAIN_API_KEY=lsv2_pt_REDACTED
+LANGCHAIN_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxx_xxxxxxxxxx
 LANGCHAIN_PROJECT=netbox-deepagents-llamacpp
 LANGCHAIN_TRACING_V2=true
 ```

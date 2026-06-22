@@ -41,21 +41,22 @@ LANGCHAIN_TRACING_V2=true
 
 ### 3. Verify Configuration
 
-Run the verification script:
+Confirm the env vars are loaded and the client can authenticate:
 
 ```bash
-python verify_langsmith.py
+./venv/bin/python -c "
+from dotenv import load_dotenv; load_dotenv()
+import os
+from langsmith import Client
+assert os.getenv('LANGCHAIN_API_KEY'), 'LANGCHAIN_API_KEY not set'
+# A successful list call confirms the key authenticates:
+list(Client().list_datasets(limit=1))
+print('✅ LangSmith client authenticated OK')
+"
 ```
 
-You should see:
-```
-✅ Environment variables
-✅ API connectivity
-✅ LangSmith client
-✅ Test trace
-
-🎉 LangSmith tracing is fully configured and working!
-```
+A `401 Unauthorized` here means the key is missing, expired, or revoked — rotate it
+at <https://smith.langchain.com/settings>. A clean exit means tracing is wired up.
 
 ### 4. Test with Your Agent
 
@@ -194,11 +195,11 @@ After enabling LangSmith:
 
 ## Resources
 
-- **Full Guide**: `docs/LANGSMITH_TRACING.md`
+- **Full Guide**: `docs/guides/langsmith-tracing.md`
+- **Evaluation harness**: `tests/eval/` (model-matrix testing) — run via `./venv/bin/python -m tests.eval.run_matrix`
 - **LangSmith Docs**: https://docs.smith.langchain.com/
-- **Example Project**: `/home/ola/dev/rnd/langOllama` (has trace analysis tools)
 - **Dashboard**: https://smith.langchain.com/
 
 ---
 
-**Need help?** Run `python verify_langsmith.py` to diagnose issues.
+**Need help?** Re-run the verification snippet in §3 to diagnose connectivity/auth issues.

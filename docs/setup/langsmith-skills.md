@@ -194,9 +194,9 @@ langsmith trace list --help
 
 ## Environment Variables
 
-These are already configured in your `.env`:
+Configure these in your `.env` (never commit real key values):
 ```bash
-LANGCHAIN_API_KEY=lsv2_pt_REDACTED
+LANGCHAIN_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxx_xxxxxxxxxx   # your LangSmith key
 LANGCHAIN_PROJECT=netbox-deepagents-llamacpp
 LANGCHAIN_TRACING_V2=true
 ```

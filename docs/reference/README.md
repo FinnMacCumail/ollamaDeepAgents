@@ -83,11 +83,18 @@ async for chunk in agent.query("list all sites"):
     print(chunk)
 ```
 
-**Middleware Stack**
-- `FilterErrorRecoveryMiddleware` - Automatic filter error recovery
+**Middleware Stack** (custom, in order)
+- `FilterErrorRecoveryMiddleware` - Automatic filter error recovery (ValueError → TOOL_VALIDATION_ERROR, ToolException → TOOL_API_ERROR)
 - `MetricsMiddleware` - Performance tracking
-- `TokenOptimizationMiddleware` - Token usage optimization
-- `SummarizationMiddleware` - Context window management (DeepAgents built-in)
+- `QueryMetricsMiddleware` - Per-query metrics
+- `SummarizationMiddleware` - Context window management (DeepAgents built-in, auto-added)
+
+> `TokenOptimizationMiddleware` was **removed** (commit `01df4e9`) — it head-truncated tool results and skill bodies to ~4000 chars. DeepAgents' built-in `SummarizationMiddleware` handles real overflow.
+
+**HarnessProfile (Workaround B, 0.6.10)** — registered for the `ollama` and `openai` providers in `netbox_agent.py`:
+- `base_system_prompt=""` — suppresses 0.6's default `BASE_AGENT_PROMPT` (its "iterate / keep working until done" framing causes over-exploration on negative-finding queries)
+- `excluded_middleware={"TodoListMiddleware"}` — removes the `write_todos` tool whose "answer-after-last-write_todos" instruction was overwriting comprehensive answers
+- See `docs/development/2026-06-14_deepagents-0.6-upgrade.md` for the full rationale. (Workaround A — the old `read_file(path=)` tool-description override — was **removed** on the 0.6 upgrade; the upstream bug is fixed.)
 
 **Tools**
 - `netbox_get_objects` - Fetch objects with filters
@@ -170,6 +177,6 @@ See [Setup Guide](../setup/README.md#environment-variables-reference) for comple
 
 ---
 
-**Framework:** DeepAgents 0.5.6
+**Framework:** DeepAgents 0.6.10
 **Supported Backends:** llama.cpp, Ollama
 **Python:** 3.11+
