@@ -23,9 +23,11 @@ This directory contains:
 **Trade-offs:** Aggregate latency +22% (34.6s → 42.3s) concentrated on VLAN 100. Likely candidates for the residual hedging: `SubAgentMiddleware`'s prompt addition or `PatchToolCallsMiddleware`. (Update 2026-06-15: QuickJS spikes confirmed PTC is NOT the fix for this — the model won't use `eval` on this workload. See `2026-06-03_quickjs-code-interpreter-research.md` §16 for the actual recommended levers, starting with suppressing `SubAgentMiddleware`'s `TASK_SYSTEM_PROMPT`.)
 **Bonus:** `tests/eval/run_matrix.py` gained `EVAL_FORCE_RERUN=1` env override during this work — useful for future regression validation.
 
-### [2026-06-08: Self-Hosting Frontier LLMs — Open Weights & GPU Rental Research](2026-06-08_self-hosting-gpu-rental-research.md)
+### [2026-06-08: Self-Hosting Frontier LLMs — Open Weights & GPU Rental Research](2026-06-08_self-hosting-gpu-rental-research.md)  ·  *Updated 2026-06-30 (strict-privacy addendum)*
 **Research:** Open-weights audit and self-host feasibility for the 5 top models from the `netbox-benchmark-v2` 10-model cloud sweep, plus current (June 2026) GPU rental pricing and inference-stack recommendations.
-**Key findings:**
+**⚠️ 2026-06-30 addendum (operative):** the project now has a **strict data-privacy mandate**, which *reverses* the original "self-hosting is irrational on cost" conclusion. Key points: rented cloud GPU is still third-party hardware (may fail a strict residency mandate — decision tiers in the addendum); DeepSeek-V4-Flash's 160 GB load tax forces **always-on** for interactive use (~$600/mo budget 5090-offload, ~$1,020/mo RTX Pro 6000 INT4, ~$3,460/mo 2× H200); for true on-prem residency the standout is an **owned Mac Studio M3 Ultra 512GB (~$10–15k, ~20 tok/s, breaks even vs rental in 3–18 months)** or a ~$5–6k RTX 5090 workstation.
+**Confidentiality vs residency (§A.5):** "strict" splits into *confidentiality* (no third party may read our data) vs *residency* (bytes physically stay with us) — different correct answers. The deciding factor for hired GPU is **where the GPU is** (that's where the data is processed), not who owns the VM. For confidentiality there's a real rented-GPU answer — **Confidential Computing** (CC-mode GPU + CPU TEE + attestation, host can't read VRAM) — but Hopper CC is **single-GPU only** (no NVLink encryption), so full-precision DeepSeek-V4-Flash can't run confidentially today; feasible config is **INT4 on a single confidential H200** (Phala ~$2,340–3,500/mo). For residency, only owned hardware qualifies. Open item: confirm which privacy tier/flavour applies before purchase.
+**Key findings (original, 2026-06-08):**
 - 4 of 5 leaderboard winners have open weights (DeepSeek-V4-Flash MIT, DeepSeek-V4-Pro MIT, Nemotron-3-Ultra OpenMDW, GLM-5 MIT); MiniMax-M3 weights expected ~2026-06-11
 - Correction: Nemotron-3-Ultra is 550B/55B MoE hybrid Mamba-Transformer, NOT a 340B dense model as earlier speculated
 - DeepSeek-V4-Flash is the standout self-host candidate — 158-160 GB FP4+FP8 native, runs on 2× H200 at 266 tok/s, or 1× RTX 5090 + 256GB DDR5 via KTransformers at 20+ tok/s
@@ -224,4 +226,4 @@ Currently active documents stay here for easy reference.
 ---
 
 **Maintained by:** Development team
-**Last Updated:** 2026-06-15
+**Last Updated:** 2026-06-30

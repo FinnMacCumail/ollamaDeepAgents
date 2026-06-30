@@ -1,13 +1,227 @@
 # Self-Hosting Frontier LLMs — Open Weights & GPU Rental Research
 
-**Date:** 2026-06-08
-**Status:** Research complete, recommendations pending implementation
-**Author:** Three parallel web-research streams (open-weights audit, GPU rental pricing, inference stack)
+**Date:** 2026-06-08 · **Updated:** 2026-06-30 (see Addendum below — DeepSeek-V4-Flash cost refresh + strict-privacy decision path)
+**Status:** Research complete. **Project now has a strict data-privacy mandate** (2026-06-30) — the strict-privacy decision path in the Addendum is the operative guidance.
+**Author:** Three parallel web-research streams (open-weights audit, GPU rental pricing, inference stack); Addendum from a focused 2026-06-30 cost-research pass
 **Purpose:** Determine which of the cloud LLMs from the `netbox-benchmark-v2` 10-model leaderboard could be self-hosted on rented GPU hardware, what the realistic configurations and costs look like, and whether self-hosting is economically rational for this project's NetBox agent workload
 
 **Related:**
 - `2026-06-03_langsmith-evaluation-research.md` — model-matrix evaluation plan that produced the leaderboard
 - `2026-06-03_quickjs-code-interpreter-research.md` — orthogonal latency-reduction lever within DeepAgents
+
+---
+
+## Addendum (2026-06-30): DeepSeek-V4-Flash cost refresh + strict-privacy decision path
+
+> This addendum supersedes the cost framing in §9–§11 for the case that now applies: a **strict
+> data-privacy mandate**. The body below (§1–§12) remains valid for the open-weights/VRAM/throughput
+> facts; the economics conclusion ("self-hosting is irrational on cost") is *reversed* once privacy
+> is a hard requirement rather than a preference.
+
+### A.1 The distinction that decides everything: rented GPU is still someone else's hardware
+
+"Run it on infrastructure you control" splits into tiers, and a *strict* mandate forces you to
+identify which one applies:
+
+| What the mandate actually requires | Rented cloud GPU OK? | What you need |
+|---|---|---|
+| **No third-party LLM API** (don't send data to Anthropic/OpenAI/DeepSeek's *service*) | ✅ Yes | Rented GPU running open weights — the model vendor never sees the data |
+| **Third-party DC OK with contracts/controls** (dedicated/bare-metal, your VPC, DPA/BAA, region-locked) | ⚠️ Depends on the regime | Rented **bare-metal / dedicated** GPU (not shared marketplace) + signed DPA |
+| **Data never leaves our premises / controlled estate** (true residency / air-gap) | ❌ **No** | **Owned / on-prem hardware** |
+
+The common trap: "self-host for privacy" → reach for RunPod/Vast.ai. But that runs the agent's
+sensitive NetBox data (network topology, device inventory, IP allocations — reconnaissance-grade)
+on a stranger's GPU, often a peer-to-peer marketplace host. For a *strict* mandate this frequently
+**fails the requirement even though no LLM vendor is involved.**
+
+### A.2 Refreshed rental cost — DeepSeek-V4-Flash (late June 2026)
+
+Per-hour, cheapest *credible* on-demand (not fragile spot multi-GPU):
+
+| Config | Speed | $/hr |
+|---|---|---|
+| Budget — 1× RTX 5090 + 256GB RAM, KTransformers offload | ~20 tok/s | **~$0.83** |
+| Sweet spot — 1× RTX Pro 6000 96GB, INT4, single GPU | fast | **~$1.42** |
+| Production — 2× H200 141GB, full FP4+FP8 | ~266 tok/s | **~$4.80** |
+
+**The load tax dominates.** The model is ~160 GB; loading it into VRAM takes 2–5+ minutes per cold
+start, while a single query is seconds of compute. So **"pay per query" is impossible** for an
+interactive agent — the model must stay resident, i.e. the GPU runs **always-on**:
+
+| Private path (always-on) | Monthly |
+|---|---|
+| Budget 5090 offload (~20 tok/s) | **~$600/mo** |
+| Sweet-spot RTX Pro 6000 INT4 | **~$1,020/mo** |
+| Production 2× H200 | **~$3,460/mo** |
+
+(On-demand/ephemeral with a persistent weights volume can reach ~$7–31/mo, but re-introduces a
+1–3 min cold start per session — fine for batch, unacceptable for interactive. True serverless —
+Modal/RunPod Serverless — is defeated by the 160 GB cold-start load.)
+
+### A.3 Owned / on-prem hardware — the answer for a strict residency mandate
+
+For "data stays on our estate," rented GPU is off the table and this becomes a one-time capex
+decision. There is a genuinely affordable option for *this exact model*:
+
+| Owned option | Approx capex | DeepSeek-V4-Flash result |
+|---|---|---|
+| **Mac Studio M3 Ultra 512GB** | ~$10–15k | **~20 tok/s** via MLX (4-bit). One quiet box, no datacenter — true on-prem. The standout. |
+| RTX 5090 32GB + 256GB DDR5 workstation | ~$5–6k | ~20 tok/s via KTransformers MoE offload. Cheapest owned path. |
+| RTX Pro 6000 96GB workstation | ~$10–12k | INT4, faster than the offload paths, single-GPU simplicity |
+| 2× H200 / 4× H100 server | ~$60–120k+ | Full ~266 tok/s — enterprise capex |
+
+**The strict-privacy headline: a ~$10–15k Mac Studio (or ~$5–6k RTX 5090 workstation) runs
+frontier-grade DeepSeek-V4-Flash entirely on-premises, paid once.** Against ~$600–3,460/mo of
+rented GPU, an owned box **breaks even in 3–18 months** *and* satisfies the strictest residency
+requirement that rented GPU cannot. For low-volume use under a strict mandate, owned hardware is
+both cheaper long-run *and* more compliant — the inverse of the usual cloud-vs-owned tradeoff.
+
+Throughput caveat: ~20 tok/s is far below the cloud's ~266 tok/s, but for a low-volume interactive
+agent answering in tens of seconds it is perfectly usable.
+
+### A.4 Decision path
+
+1. **Mandate = "no LLM SaaS API"** → rented **dedicated** GPU is acceptable. Sweet-spot RTX Pro
+   6000 INT4, ~$1,020/mo always-on. Use a named provider (CoreWeave / Lambda / Crusoe), your VPC,
+   encryption at rest — **not** Vast.ai spot.
+2. **Mandate = "third-party DC OK with contracts"** → same as (1), plus a signed DPA/BAA and a
+   region-locked, bare-metal instance.
+3. **Mandate = "data stays on our premises"** → **owned hardware.** Recommended first move: a
+   **Mac Studio M3 Ultra 512GB** (~$10–15k), after verifying current DeepSeek-V4-Flash-on-MLX
+   throughput and quant level for the agent's query mix. Cheapest viable: the RTX 5090 + 256GB-DDR5
+   workstation via KTransformers.
+
+**Open item:** confirm which tier the mandate is (it determines rented-vs-owned), then verify the
+chosen config's real throughput on the project's actual query distribution before purchase.
+
+### A.5 The confidentiality path: "own the VM + hire a *confidential* GPU" (research 2026-06-30)
+
+For a **confidentiality** mandate ("no third party may *read* our data") — as opposed to a
+residency mandate — there is a rented-GPU architecture that genuinely qualifies: **Confidential
+Computing**. The GPU runs in CC mode (encrypted VRAM + encrypted CPU↔GPU path) inside a CPU TEE
+(AMD SEV-SNP / Intel TDX), with **remote attestation**, so the host/hypervisor *cannot read guest
+memory or VRAM*. This is the coherent form of "own the VM, hire the GPU."
+
+**Decisive constraint — Hopper confidential is single-GPU only.** H100/H200 CC mode does **not
+encrypt NVLink** (GPU↔GPU), so there is no secure *multi-GPU* memory domain. Encrypted-NVLink
+multi-GPU confidential only arrives on **Blackwell (B200/B300)** and is currently
+enterprise/dedicated, not commodity on-demand. **Therefore full-precision DeepSeek-V4-Flash
+(~160 GB → 2× H200 / 4× H100) cannot run confidentially today.** The feasible config is **INT4
+(~80 GB) on a *single* confidential H200** (a single H100's 80 GB is too tight once KV cache is added).
+
+**Providers + pricing (June 2026):**
+
+| Provider | Confidential GPU | Tech | $/hr on-demand | Notes |
+|---|---|---|---|---|
+| **Phala Cloud** (specialist) | 1× H200 (also H100, B300) | Intel TDX + NVIDIA CC, dual attestation | **$4.80** (reserved $3.20) | Near-zero premium; bring your own MIT weights. Best fit. |
+| Azure NCCadsH100v5 | 1× H100 only | AMD SEV-SNP + H100 CC | $8.90 (~+27% vs non-conf) | Hyperscaler compliance posture; capacity thin; 80 GB tight |
+| Google Cloud A3 confidential | 1× H100 only | Intel TDX + H100 CC | ~$3–3.7/GPU-hr + surcharge | GA but spot/flex-start only — poor for always-on |
+| Super Protocol | H200 single; HGX multi on Blackwell | Intel TDX + NVIDIA CC | marketplace | Confirms Hopper = single-GPU |
+| AWS | — | — | n/a | **No confidential GPU** (Nitro can't attach a GPU) |
+
+**Two simplifications in our favour:**
+1. **CC overhead is tiny for a model this large** — ~0–5% (penalty is at prompt-ingestion/TTFT,
+   near-zero on sustained decode; a 70B model measured ~0%).
+2. **The weights are open/MIT**, so only the *prompts and outputs* need protecting, not the model —
+   removing the hardest part of TEE setups (sealed-weight delivery / key ceremonies). Pull the INT4
+   weights normally into the confidential VM; gate the encrypted prompt channel on attestation.
+
+**Cost (always-on ~730 hr/mo):**
+
+| Option | Monthly |
+|---|---|
+| Confidential 1× H200 INT4 (Phala on-demand) | **~$3,500** |
+| Confidential 1× H200 INT4 (Phala reserved) | **~$2,340** |
+| Confidential 1× H100 (Azure NCC) | ~$6,500 |
+| *Non-confidential* RTX Pro 6000 INT4 (A.2) | ~$1,020 |
+| *Owned* Mac Studio M3 Ultra (A.3) | ~$300–400 amortized (3 yr; ~$10–15k capex) |
+
+**Verdict.** "Own VM + hire a confidential GPU" is viable as a **single confidential H200 running
+DeepSeek-V4-Flash at INT4** (Phala/Super Protocol, ~$2,340–3,500/mo). But CC mode caps you at
+single-GPU INT4, so you forgo the full multi-GPU ~266 tok/s — you get a fast single GPU, not the
+production speed. Confidential rental therefore wins **only** when all three hold: (1) the mandate
+is *confidentiality* not *residency*; (2) you need more throughput than an owned box gives; and
+(3) you can't physically hold hardware. **If physical control satisfies the mandate, the owned Mac
+Studio (~$300–400/mo amortized) is ~6–10× cheaper and strictly more private.** Confidential-GPU is
+the right answer specifically when you *must* use rented infra yet *also* can't let the provider
+read your data.
+
+### A.6 Implementation specs — both paths (documented so either can proceed)
+
+> ⚠️ **Load-bearing number to verify before either purchase — the INT4 footprint.** This addendum
+> has used "DeepSeek-V4-Flash INT4 ≈ 80 GB" (carried from §2). Naive 4-bit math on 284B params is
+> ~142 GB, which would **not** fit a single H200 (141 GB) with KV-cache headroom, and would make the
+> confidential single-GPU path (§A.5) **infeasible on Hopper** without a more aggressive,
+> quality-reducing quant (Q3 ~107 GB / Q2 ~71 GB). The real footprint depends on DeepSeek-V4-Flash's
+> actual quantization scheme (MoE expert quant can be more aggressive than 0.5 byte/param). **Confirm
+> the genuine INT4/Q4 weight size + KV cache at 64K context before committing to a single-GPU config.**
+> This single fact decides whether Path A below is even possible on H200.
+
+#### Path A — Confidentiality (own VM + hire a confidential GPU)
+
+*Use when the mandate is "no third party may read our data" and you can't physically hold hardware.*
+
+- **Provider:** Phala Cloud (primary — CC default, BYO MIT weights, H200 $4.80/hr on-demand / $3.20
+  reserved) or Super Protocol; Azure NCCadsH100v5 only if you need hyperscaler compliance posture
+  (H100-only, $8.90/hr, 80 GB tight). **Not** AWS (no confidential GPU), **not** Vast.ai/RunPod
+  community (no CC). Prefer **reserved** for an always-on agent (~$2,340/mo).
+- **GPU + config:** 1× **confidential H200 141 GB**, DeepSeek-V4-Flash at INT4 (subject to the
+  footprint caveat above), served by vLLM or SGLang with INT4 kernels. Single-GPU only — do not plan
+  multi-GPU on Hopper.
+- **Confidential stack:** CPU TEE (Intel TDX or AMD SEV-SNP) confidential VM + GPU CC mode;
+  attestation via NVIDIA NRAS (or Intel Trust Authority for composite TDX+GPU). Gate the encrypted
+  prompt channel on a successful attestation before any data flows.
+- **What you protect:** only **prompts + outputs** (the weights are open/MIT — pull them normally;
+  no sealed-weight ceremony). The confidentiality boundary is prompt → activations → KV cache →
+  output, all inside encrypted VRAM.
+- **Data flow:** NetBox (on-prem) → agent → TLS to the confidential VM → attestation-gated channel →
+  inference in the TEE → response back. The provider's host never sees plaintext.
+- **Pre-purchase verification checklist:**
+  1. **Confirm the INT4 footprint fits a single H200 with 64K-context KV headroom** (the caveat above).
+     If it needs >~120 GB, this path is blocked on Hopper → wait for confidential Blackwell or accept Q2/Q3 quality loss.
+  2. Confirm Phala/your provider has H200 CC capacity in an acceptable region; run their 24-hr trial.
+  3. Run the full attestation flow end-to-end (NRAS/ITA) and confirm key-release gating works.
+  4. Measure real INT4 throughput + TTFT on the project's actual query mix (CC overhead should be ~0–5%).
+  5. Confirm reserved pricing + commitment terms; confirm no plaintext logging/telemetry by the provider.
+- **Cost:** ~$2,340 (reserved) – $3,500 (on-demand) /mo, always-on.
+
+#### Path B — Residency (owned, on-premises)
+
+*Use when the mandate is "data physically stays in our control / on our premises."*
+
+- **Hardware (pick one):**
+  - **Mac Studio M3 Ultra 512 GB (~$10–15k) — recommended.** One quiet box, no datacenter; runs
+    DeepSeek-V4-Flash 4-bit via MLX at ~20 tok/s. Best capex/simplicity for true on-prem.
+  - **RTX 5090 32 GB + 256 GB DDR5 workstation (~$5–6k) — cheapest.** KTransformers MoE CPU-offload,
+    ~20 tok/s. More assembly/ops, but lowest cost.
+  - **RTX Pro 6000 96 GB workstation (~$10–12k).** INT4, faster than the offload paths, single-GPU
+    simplicity — *if* the INT4 footprint fits 96 GB (see caveat).
+- **Software stack:** MLX (Mac) or KTransformers / ik_llama.cpp (workstation); DeepSeek-V4-Flash 4-bit.
+- **Isolation:** fully on-prem; can be air-gapped from the internet (NetBox + agent + model all local).
+  Nothing leaves the building — satisfies the strictest residency requirement that no rental can.
+- **Pre-purchase verification checklist:**
+  1. **Verify DeepSeek-V4-Flash-on-MLX (4-bit) real throughput + quant level on M3 Ultra** at the
+     project's query mix — this is the key unknown; the ~20 tok/s figure is extrapolated from V3-class.
+  2. Confirm the 4-bit weights + KV cache at 64K context fit in 512 GB unified memory (they should).
+  3. Sanity-check answer quality at 4-bit vs the cloud baseline on the `netbox-benchmark-v2` queries
+     (quantization can cost quality — run the eval harness against the local model before relying on it).
+  4. Confirm thermal/power/noise acceptable for the deployment location.
+- **Cost:** one-time ~$5–15k capex (~$140–420/mo amortized over 3 yr); no ongoing rental.
+
+#### Selection summary
+
+| | Path A — Confidentiality (confidential rental) | Path B — Residency (owned) |
+|---|---|---|
+| Satisfies | "no third party may *read* the data" | "data physically *stays* with us" |
+| Hardware | 1× confidential H200, INT4, rented | Mac Studio M3 Ultra 512GB (or workstation) |
+| Speed | fast single-GPU (not full multi-GPU 266 tok/s) | ~20 tok/s |
+| Cost | ~$2,340–3,500/mo always-on | ~$10–15k once (~$300–400/mo amortized) |
+| Biggest risk to verify | INT4 fits a single H200 (footprint caveat) | DeepSeek-V4-Flash-on-MLX throughput + 4-bit quality |
+| Picks you when | must use rented infra, can't hold hardware | can hold hardware (cheaper *and* strictest) |
+
+**Both paths share one prerequisite:** verify the real quantized footprint/throughput on the
+project's actual query distribution before spending — it's the single fact that can invalidate
+either config.
 
 ---
 
