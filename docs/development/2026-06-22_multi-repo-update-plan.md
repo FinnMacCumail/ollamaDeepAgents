@@ -159,6 +159,6 @@ list + `index.md` Mermaid timeline. Phase 5 links finalized after Stage 0.
 - [x] This plan doc written
 - [x] Stage 1 harvest — `docs/lineage/` (4 docs + README), `tests/manual/legacy-trace-tools/`
       (7 scripts + README), `.claude/commands/` (PRP slash-commands), `PRPs/` (template + README)
-- [ ] ollamaDeepAgents pushed public ← *next; needs user go-ahead on the push*
-- [ ] Stage 1 supersede banner + hygiene (URL-dependent bits)
-- [ ] Stage 2 rtf-research Phase 5 + methods + ADRs + housekeeping
+- [x] ollamaDeepAgents pushed public — https://github.com/FinnMacCumail/ollamaDeepAgents (3be219a)
+- [x] Stage 1 supersede banner + hygiene — deepagents committed (3aff4754) + pushed
+- [x] Stage 2 rtf-research Phase 5 + methods + ADRs + housekeeping — committed (da5de94) + pushed
