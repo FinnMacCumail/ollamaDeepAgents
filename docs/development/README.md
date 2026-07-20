@@ -13,6 +13,15 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-07-20: NetBox GraphQL Read Tool (PRP 1)](2026-07-20_netbox-graphql-read-tool.md)
+**Execution:** First PRP-driven feature since the harvested PRP workflow was added. Adds two standalone **read-only** GraphQL tools (`netbox_graphql`, `netbox_graphql_schema`) so the agent can retrieve nested/cross-model data in one server-side request instead of multi-hop MCP decomposition.
+**Key points:**
+- Standalone tools appended in `netbox_agent.py` — NOT wrapped by `NetBoxToolWrapper`, so they bypass `FilterValidator` by design (GraphQL has its own grammar).
+- Read-only via `graphql-core` AST inspection (mutations/subscriptions/malformed rejected before any HTTP); but the *primary* safety surface is query-cost limits (depth/size/timeout), since the endpoint is read-only server-side anyway.
+- Live-verified: introspection enabled; legacy `Authorization: Token` auth; 4.3/4.4 Strawberry filter grammar (bare `id: 6`, string `{exact:}`, `<model>_list` roots).
+- 23/23 new unit tests pass; regression-neutral (same 7 pre-existing integration failures with/without the change).
+**Not done (PRP 2):** routing skill + GraphQL-vs-MCP A/B on `netbox-benchmark-v3`. No performance claim yet.
+
 ### [2026-06-14: DeepAgents 0.5.6 → 0.6.10 Upgrade](2026-06-14_deepagents-0.6-upgrade.md)
 **Execution:** First Tier 2 item from the LangSmith eval research executed. Upgrades `deepagents` from 0.5.6 → 0.6.10 (also bumps langchain 1.2.17→1.3.9, langgraph 1.1.10→1.2.5, langsmith 0.8.0→0.8.15).
 **Key findings:**
@@ -98,6 +107,7 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
 | 2026-06-08 | Self-hosting GPU rental research | [2026-06-08_self-hosting-gpu-rental-research.md](2026-06-08_self-hosting-gpu-rental-research.md) |

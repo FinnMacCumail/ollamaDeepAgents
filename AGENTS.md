@@ -75,6 +75,16 @@ loop continues rather than crashing.
 it is **transparent to PTC** — tool calls made from inside a QuickJS `eval` block also surface
 these structured errors. See `docs/development/2026-06-03_quickjs-code-interpreter-research.md` §14.
 
+**Read-only GraphQL tools (`netbox_graphql.py`, 2026-07-20):** `netbox_graphql` +
+`netbox_graphql_schema` are appended to the tool list **standalone** — they are NOT wrapped by
+`NetBoxToolWrapper`, so they bypass `FilterValidator` by design (GraphQL has its own grammar).
+They reuse the same `TOOL_VALIDATION_ERROR:` / `TOOL_API_ERROR:` structured-error convention.
+Read-only is enforced by `graphql-core` AST inspection (mutations rejected before any HTTP);
+query-cost limits (depth/size/timeout, env-overridable) are the primary safety surface. Routing
+(when to prefer GraphQL over the MCP tools) is deferred to PRP 2 —
+`PRPs/initials/netbox-graphql-routing-and-evaluation.md`. See
+`docs/development/2026-07-20_netbox-graphql-read-tool.md`.
+
 ---
 
 ## 4. DeepAgents 0.6.10 framework state

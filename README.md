@@ -13,6 +13,7 @@ Inference runs through one of two interchangeable backends (one-line `.env` swit
 
 - **Dual backend**: Ollama (local + Cloud) or llama.cpp, selected via `LLM_BACKEND`
 - **Automatic Filter Recovery**: converts MCP filter violations into recoverable structured errors
+- **Read-only GraphQL tool**: `netbox_graphql` retrieves nested/cross-model data in one server-side query (complements the MCP tools; mutations rejected via AST inspection) — see [dev note](docs/development/2026-07-20_netbox-graphql-read-tool.md)
 - **Progressive Skills System**: loads NetBox domain knowledge just-in-time
 - **Model-matrix evaluation**: LangSmith-based harness (`tests/eval/`) scoring models on a fixed benchmark
 - **Real-time Streaming**: responsive conversational interface

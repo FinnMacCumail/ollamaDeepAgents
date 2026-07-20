@@ -66,11 +66,12 @@ for _provider in ("ollama", "openai"):
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware
+from ..tools.netbox_graphql import build_graphql_tools
 from ..tools.netbox_tools import NetBoxToolWrapper, create_netbox_mcp_client
 from ..utils.config import NetBoxConfig, QueryMetrics, load_netbox_config
 from ..utils.logging import get_logger
-from .ollama_config import create_ollama_model
 from .llamacpp_config import create_llamacpp_model
+from .ollama_config import create_ollama_model
 
 logger = get_logger(__name__)
 
@@ -262,6 +263,12 @@ class NetBoxDeepAgent:
         print("DEBUG: Getting wrapped tools...", flush=True)
         tools = await self.tool_wrapper.get_tools()
         print(f"DEBUG: Got {len(tools)} tools", flush=True)
+
+        # Append the standalone read-only GraphQL tools (netbox_graphql +
+        # netbox_graphql_schema). These are NOT wrapped by NetBoxToolWrapper, so
+        # they bypass FilterValidator by design — GraphQL has its own grammar.
+        tools.extend(build_graphql_tools(self.netbox_config))
+        print(f"DEBUG: Total {len(tools)} tools (incl. GraphQL)", flush=True)
 
         # Create LLM model based on backend
         print(f"DEBUG: Creating {self.backend} model...", flush=True)
