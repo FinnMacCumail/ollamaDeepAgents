@@ -183,4 +183,91 @@ def tool_call_efficiency(
     }
 
 
-ALL_EVALUATORS = [entity_coverage, completeness_judge, tool_call_efficiency]
+_CORRECTNESS_PROMPT = """You are fact-checking a model's answer to a NetBox infrastructure question against a KNOWN-CORRECT reference answer (verified against the live NetBox database).
+
+QUESTION:
+{question}
+
+REFERENCE ANSWER (ground truth):
+{reference}
+
+MODEL ANSWER (to be checked):
+{answer}
+
+Score the MODEL ANSWER's FACTUAL CORRECTNESS on a 0.0 to 1.0 scale by comparing every factual claim (counts, names, statuses, percentages, IP/prefix allocations) against the REFERENCE ANSWER:
+- 1.0 = every claim agrees with the reference; no contradictions.
+- 0.5 = mostly correct but at least one MATERIAL claim contradicts the reference (or a key fact the question asked for is fabricated).
+- 0.0 = the central claim the question asked for is wrong or fabricated (e.g. reports allocated IPs / a non-zero utilization percentage when the reference says 0% / none).
+
+CRITICAL RULES:
+- Judge CONTRADICTIONS, not completeness. Extra correct detail beyond the reference does NOT lower the score.
+- A confident, specific value that DISAGREES with the reference must be scored LOW and named in the rationale. Example: answer says "~7.7% IP utilization" or "180 IPs allocated" when the reference says "0% / no host IPs allocated" -> this is a fabrication, score <= 0.3 and say so.
+- Do not be generous. If you cannot verify a claim from the reference and it contradicts it, treat it as wrong.
+
+Respond with JSON only, no prose around it:
+{{"score": <float 0.0-1.0>, "rationale": "<one sentence; name the specific contradiction if any>"}}
+"""
+
+
+def correctness_judge(
+    inputs: dict,
+    outputs: dict,
+    reference_outputs: dict,
+) -> dict:
+    """Reference-grounded factual-correctness score 0.0-1.0.
+
+    Unlike `completeness_judge` (which is fed only `expected_entities` and so
+    rewards a thorough-but-false answer), this evaluator is given the dataset's
+    `reference_answer` and asked to flag CONTRADICTIONS. This is what catches
+    confident hallucinations such as reporting "~7.7% IP utilization" when the
+    verified ground truth is 0% — see the 2026-07-20 v4 re-scoring note.
+
+    Falls back to score=None (not 0.0) when there is no reference_answer or the
+    judge call fails, so missing ground truth is distinguishable from a wrong
+    answer.
+    """
+    question = inputs.get("question", "")
+    answer = outputs.get("answer", "") or ""
+    reference = reference_outputs.get("reference_answer") or ""
+
+    if not reference.strip():
+        return {
+            "key": "correctness",
+            "score": None,
+            "comment": "No reference_answer in dataset — cannot fact-check",
+        }
+    if not answer.strip():
+        return {"key": "correctness", "score": 0.0, "comment": "Empty answer"}
+
+    prompt = _CORRECTNESS_PROMPT.format(
+        question=question, reference=reference, answer=answer
+    )
+    model = _get_judge_model()
+    try:
+        response = model.invoke(prompt)
+        text = response.content if hasattr(response, "content") else str(response)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return {
+                "key": "correctness",
+                "score": None,
+                "comment": f"Judge returned no JSON: {text[:120]}",
+            }
+        parsed = json.loads(match.group(0))
+        score = float(parsed.get("score", 0.0))
+        rationale = str(parsed.get("rationale", ""))[:200]
+        return {"key": "correctness", "score": score, "comment": rationale}
+    except Exception as e:
+        return {
+            "key": "correctness",
+            "score": None,
+            "comment": f"Judge call failed: {type(e).__name__}: {e}",
+        }
+
+
+ALL_EVALUATORS = [
+    entity_coverage,
+    completeness_judge,
+    tool_call_efficiency,
+    correctness_judge,
+]
