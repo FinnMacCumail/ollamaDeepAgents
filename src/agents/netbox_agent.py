@@ -150,6 +150,18 @@ When encountering filter errors:
    - Second: Use the object's ID in a simple filter
 3. Use netbox_search_objects for pattern matching instead of complex filters
 
+## CROSS-MODEL / NESTED READS — prefer GraphQL:
+For a read that spans MULTIPLE models or needs 3+ ID-joined lookups (e.g.
+"devices at these sites with their region", "IPs on interfaces of device X",
+"circuits per provider and where they terminate"), prefer the `netbox_graphql`
+tool — it does the cross-model join server-side in ONE request, which the MCP
+two-step pattern cannot. Load the `netbox-graphql` skill for the grammar and
+routing rules, and call `netbox_graphql_schema(<Type>)` first for any type or
+field you are unsure of (this works for ANY NetBox object, not just common ones).
+Keep SIMPLE single-object lookups and fuzzy searches on the MCP tools
+(`netbox_get_objects` / `netbox_search_objects`) — GraphQL is a complementary
+path, not a default. `netbox_graphql` is READ-ONLY; never attempt mutations.
+
 ## OUTPUT FORMATTING:
 - Present results as concise markdown tables
 - Highlight key information relevant to user's question

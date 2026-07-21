@@ -10,6 +10,12 @@ priority: high
 
 This skill provides essential knowledge about NetBox MCP server filter limitations and how to work around them. Following these patterns will prevent filter errors and ensure successful queries.
 
+> **Cross-model / nested reads?** For a query spanning two or more NetBox models,
+> or needing 3+ ID-joined lookups (which the MCP two-step pattern below handles
+> awkwardly), prefer the `netbox_graphql` tool — see the **`netbox-graphql`**
+> skill. The MCP patterns here remain the right choice for simple single-object
+> lookups, fuzzy search, and pagination.
+
 ## HANDLING PAGINATED RESPONSES
 
 NetBox returns paginated results. A response shaped like this is INCOMPLETE:
