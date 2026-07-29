@@ -80,10 +80,25 @@ these structured errors. See `docs/development/2026-06-03_quickjs-code-interpret
 `NetBoxToolWrapper`, so they bypass `FilterValidator` by design (GraphQL has its own grammar).
 They reuse the same `TOOL_VALIDATION_ERROR:` / `TOOL_API_ERROR:` structured-error convention.
 Read-only is enforced by `graphql-core` AST inspection (mutations rejected before any HTTP);
-query-cost limits (depth/size/timeout, env-overridable) are the primary safety surface. Routing
-(when to prefer GraphQL over the MCP tools) is deferred to PRP 2 —
-`PRPs/initials/netbox-graphql-routing-and-evaluation.md`. See
+query-cost limits (depth/size/timeout, env-overridable) are the primary safety surface. See
 `docs/development/2026-07-20_netbox-graphql-read-tool.md`.
+
+**Routing (PRP 2, `src/skills/netbox-graphql/`, 2026-07-21):** the `netbox-graphql` skill +
+a system-prompt section teach the model to prefer `netbox_graphql` for **nested / cross-model
+reads and 3+-hop joins**, and keep **simple single-object lookups and fuzzy search on the MCP
+tools**. Generalization to *any* NetBox type comes from teaching the universal Strawberry grammar
+(root = snake_case model + `_list`, IDs bare, strings `{exact:}`/`{in_list:}`, nested filters)
++ **runtime introspection** via `netbox_graphql_schema(<Type>)` — NOT a fixed schema. GraphQL is
+a complementary path, never the default.
+
+**Measured A/B verdict (netbox-benchmark-v4, 2026-07-21, one run/arm):** GraphQL routing is a
+correctness win on cross-domain/aggregation queries at a ~2× tool-call cost. The
+`site-comparison` IP-allocation trap — which hallucinated a different fabricated utilization %
+on every MCP-only run (7.7 / 17.6 / 100 / 23.2%) — scored **0.5 → 1.0 correctness on BOTH
+models** with GraphQL; deepseek-v4-pro rose 0.65 → 0.883 overall. Cost: ~2× tool calls, and
+flash over-routed a simple `device-detail` lookup to GraphQL (1.0 → 0.5). Verdict: keep GraphQL
+for cross-domain; tighten routing so simple lookups stay on MCP; replicate ≥3× before quoting
+the aggregate. Full write-up: `docs/traces/2026-07-21_netbox-benchmark-v4_graphql.md`.
 
 ---
 
