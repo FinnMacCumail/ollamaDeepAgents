@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-08-10: LangChain Ecosystem vs. the NetBox Cloud Platform MCP](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md)
+**Research (5 parallel agents):** maps the current (Aug 2026) LangChain/LangGraph/DeepAgents/LangSmith ecosystem against NetBox Labs' Cloud-only "Platform MCP Server" to decide what's reproducible on this self-hosted, read-only stack.
+**Key points:**
+- Cloud's edge = tool breadth (~100 tools) + Code Mode, both of which only pay off at that breadth. **Code Mode reconfirmed "skip"** (Anthropic τ²-bench: sequential single-call workloads gain nothing, ~8% more cost) — the **already-shipped GraphQL tool is the right lever** for round-trips.
+- Reproducible & self-hostable: **subagents** (scoping + the planned model-handoff routing — the Aug-5 LangChain "SRE agent" blog is the blueprint), **Skills** (already in use), **`RubricMiddleware`** (structured self-correction), server-side tool generation from NetBox OpenAPI/GraphQL (LangChain can't add tools mid-run, #33808).
+- **Skip** all hosted products (Managed Deep Agents, LLM Gateway, Context Hub, hosted LangSmith) under the privacy mandate; use `openevals`/`agentevals` (MIT) + OTel for on-prem eval parity.
+**Actionable task (§8):** upgrade `deepagents` 0.6.10 → **0.7.5** (crosses the 0.7.0 major: planning opt-in, empty base prompt ~65% token cut, `FilesystemMiddleware` read-only allowlist) — behind the eval gate. ~½–1 day.
+
 ### [2026-07-20: NetBox GraphQL Read Tool (PRP 1)](2026-07-20_netbox-graphql-read-tool.md)
 **Execution:** First PRP-driven feature since the harvested PRP workflow was added. Adds two standalone **read-only** GraphQL tools (`netbox_graphql`, `netbox_graphql_schema`) so the agent can retrieve nested/cross-model data in one server-side request instead of multi-hop MCP decomposition.
 **Key points:**
@@ -107,6 +115,7 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
 | 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
