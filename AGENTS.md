@@ -77,22 +77,23 @@ these structured errors. See `docs/development/2026-06-03_quickjs-code-interpret
 
 ---
 
-## 4. DeepAgents 0.6.10 framework state
+## 4. DeepAgents 0.7.5 framework state
 
 - **Workaround A:** REMOVED on the 0.6 upgrade. The `read_file(path=)` bug is fixed upstream.
-- **Workaround B:** ACTIVE. In `netbox_agent.py`, a `HarnessProfile` is registered for the
-  `ollama` and `openai` providers:
+- **Workaround B:** RECONCILED on the 0.7.5 upgrade (2026-08-11) — now largely *inherent* to
+  0.7's leaner defaults. In `netbox_agent.py`, a `HarnessProfile` is registered for the `ollama`
+  and `openai` providers:
   ```python
   HarnessProfile(
-      base_system_prompt="",                                  # suppress 0.6 BASE_AGENT_PROMPT
-      excluded_middleware=frozenset({"TodoListMiddleware"}),  # remove write_todos + its prompt
+      base_system_prompt="",   # belt-and-suspenders: 0.7 base prompt is empty by default anyway
   )
   ```
-  Why: 0.6 silently appends ~9.6K chars of default prompt content (`BASE_AGENT_PROMPT` +
-  `TASK_SYSTEM_PROMPT` + `WRITE_TODOS_SYSTEM_PROMPT`). The "iterate / keep working until done"
-  framing causes search-hedging on negative-finding queries, and the TodoList
-  "answer-after-last-write_todos" instruction overwrote a comprehensive answer with an "All
-  done" filler. Full diagnostic: `docs/development/2026-06-14_deepagents-0.6-upgrade.md`.
+  The old `excluded_middleware={"TodoListMiddleware"}` was **removed**: 0.7.0 made planning
+  opt-in, so `TodoListMiddleware`/`write_todos` is no longer bundled, and 0.7.x strictly raises
+  `ValueError` when an exclusion matches no assembled middleware. The negative-finding regression
+  Workaround B originally fixed no longer applies (the middleware isn't present, and the base
+  prompt is empty). Full diagnostics: `docs/development/2026-06-14_deepagents-0.6-upgrade.md`
+  (original) and `2026-08-11_deepagents-0.7.5-upgrade.md` (reconciliation + eval gate).
 
 - **Custom middleware order:** `FilterErrorRecoveryMiddleware` → `MetricsMiddleware` →
   `QueryMetricsMiddleware`, plus the built-in `SummarizationMiddleware`.
