@@ -21,41 +21,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # now uses `file_path=` consistently in all worked examples and skills.py
 # no longer has the hardcoded bad example.
 
-# Workaround B (added on 0.6.10 upgrade) — suppress two pieces of 0.6's
-# default behaviour that actively regress this agent's quality on negative-
-# finding queries (e.g. "where is VLAN X deployed at tenant Y?" when the
-# answer is "not deployed"). Diagnostic recorded in trace
-# 019ec810-1793-78f0-b608-7fd76f5bce0f and discussed in the upgrade
-# investigation notes (2026-06-14).
+# Workaround B (added on the 0.6.10 upgrade; RECONCILED on the 0.7.5 upgrade,
+# 2026-08-11) — suppress 0.6 default behaviour that regressed this agent's
+# quality on negative-finding queries (e.g. "where is VLAN X deployed at tenant
+# Y?" when the answer is "not deployed"). On 0.7.0 the framework's own leaner
+# defaults now do most of what this did, so it is largely inherent rather than a
+# workaround. Original diagnostic: trace 019ec810-... and
+# docs/development/2026-06-14_deepagents-0.6-upgrade.md.
 #
-# Two suppressions:
+# 1. `base_system_prompt=""` — 0.6 silently appended a ~2258-char
+#    `BASE_AGENT_PROMPT` ("iterate / keep working until fully done") that caused
+#    over-investigation hedging on negative findings (18 tool calls on the VLAN
+#    100 query vs. 8 baseline, redundant search variants the `netbox-mcp-filters`
+#    skill prohibits). 0.7.0 makes the base prompt EMPTY by default, so this
+#    override is now belt-and-suspenders — kept explicit to guard against any
+#    residual base prompt and to document intent. `NETBOX_SYSTEM_PROMPT` carries
+#    all the guidance the agent needs.
 #
-# 1. `base_system_prompt=""` — overrides `BASE_AGENT_PROMPT` (the 2258-char
-#    default deep-agent prompt 0.6 silently appends to every system_prompt).
-#    Its "iterate", "verify against what was asked, not your own output",
-#    and "keep working until task is fully complete; only yield back when
-#    done or genuinely blocked" instructions are designed for coding/research
-#    agents. For a read-only infrastructure query agent they actively cause
-#    over-investigation hedging on negative findings — empirically observed
-#    as 18 tool calls on the VLAN 100 query (vs. 8 baseline) with redundant
-#    search variants ("Jimbob's"/"Jimbob"/"Banking") that the
-#    `netbox-mcp-filters` skill's AVOID REDUNDANT SEARCHES section
-#    explicitly prohibits. Suppressing entirely restores 0.5.6 prompt
-#    behaviour; NETBOX_SYSTEM_PROMPT carries all the guidance the agent
-#    needs.
-#
-# 2. `excluded_middleware={"TodoListMiddleware"}` — removes the `write_todos`
-#    tool and its 1370-char system-prompt addition. The TodoList prompt
-#    contains "When you finish all work, write your final answer in the
-#    message AFTER your last write_todos call" — directly mandating a
-#    two-turn finish that, on the VLAN 100 query, caused the model's
-#    comprehensive answer to be displaced by a meaningless "All done. Let
-#    me know..." closing remark in the extra turn. Tool-call agents like
-#    this one don't benefit from persistent todos (the skill content
-#    already encodes the decomposition pattern).
+# 2. TodoList suppression is now INHERENT and the old
+#    `excluded_middleware={"TodoListMiddleware"}` was REMOVED on the 0.7.5
+#    upgrade. 0.7.0 makes planning opt-in, so `TodoListMiddleware`/`write_todos`
+#    is no longer bundled by default — and 0.7.x strictly raises `ValueError`
+#    when an `excluded_middleware` entry matches no assembled middleware. The
+#    original reason (the "answer-after-last-write_todos" two-turn finish
+#    overwriting the comprehensive answer with an "All done" filler) no longer
+#    applies because the middleware simply isn't present.
 _NETBOX_PROFILE = HarnessProfile(
     base_system_prompt="",
-    excluded_middleware=frozenset({"TodoListMiddleware"}),
 )
 # Register provider-wide for both backends this project uses (`ollama` for
 # the cloud + local Ollama path, `openai` for the llama.cpp OpenAI-compatible

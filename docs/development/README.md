@@ -13,6 +13,15 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-08-11: DeepAgents 0.6.10 → 0.7.5 Upgrade](2026-08-11_deepagents-0.7.5-upgrade.md)
+**Execution:** Crosses the 0.7.0 major (also bumps langchain 1.3.9→1.3.14, langchain-core 1.4.7→1.5.3, langsmith 0.8.15→0.10.17). Tracks the current subagent + `RubricMiddleware` APIs for the planned model-handoff routing.
+**Key points:**
+- **One breaking change:** 0.7.0 makes planning opt-in, so `TodoListMiddleware` isn't bundled — and 0.7.x strictly errors when `excluded_middleware` matches nothing. **Workaround B reconciled:** removed the TodoList exclusion (suppression is now inherent), kept `base_system_prompt=""` as belt-and-suspenders.
+- Workaround B API (`HarnessProfile`/`register_harness_profile`) survived; agent builds, skills load.
+- **Regression-neutral** (12 unit failures all pre-exist on 0.6.10, proven by reinstall-and-compare).
+- **Eval gate passed:** no correctness regression vs the 0.6.10 baseline (combined mean 0.70→0.667, flat within variance; flash −0.167, pro +0.10). Negative-finding queries healthy (Jimbob VLAN 100 = 1.0/1.0 both models).
+- `langchain-quickjs 0.2.0` now pins `<0.7` — harmless (deferred package, only used by `tests/spike/`).
+
 ### [2026-08-10: LangChain Ecosystem vs. the NetBox Cloud Platform MCP](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md)
 **Research (5 parallel agents):** maps the current (Aug 2026) LangChain/LangGraph/DeepAgents/LangSmith ecosystem against NetBox Labs' Cloud-only "Platform MCP Server" to decide what's reproducible on this self-hosted, read-only stack.
 **Key points:**
@@ -118,6 +127,7 @@ Original feature specification and architecture planning:
 | 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
 | 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
+| 2026-08-11 | DeepAgents 0.6.10 → 0.7.5 upgrade | [2026-08-11_deepagents-0.7.5-upgrade.md](2026-08-11_deepagents-0.7.5-upgrade.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
 | 2026-06-08 | Self-hosting GPU rental research | [2026-06-08_self-hosting-gpu-rental-research.md](2026-06-08_self-hosting-gpu-rental-research.md) |
 | 2026-06-03 | QuickJS code interpreter middleware research | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
