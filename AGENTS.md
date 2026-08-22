@@ -91,14 +91,18 @@ tools**. Generalization to *any* NetBox type comes from teaching the universal S
 + **runtime introspection** via `netbox_graphql_schema(<Type>)` — NOT a fixed schema. GraphQL is
 a complementary path, never the default.
 
-**Measured A/B verdict (netbox-benchmark-v4, 2026-07-21, one run/arm):** GraphQL routing is a
-correctness win on cross-domain/aggregation queries at a ~2× tool-call cost. The
-`site-comparison` IP-allocation trap — which hallucinated a different fabricated utilization %
-on every MCP-only run (7.7 / 17.6 / 100 / 23.2%) — scored **0.5 → 1.0 correctness on BOTH
-models** with GraphQL; deepseek-v4-pro rose 0.65 → 0.883 overall. Cost: ~2× tool calls, and
-flash over-routed a simple `device-detail` lookup to GraphQL (1.0 → 0.5). Verdict: keep GraphQL
-for cross-domain; tighten routing so simple lookups stay on MCP; replicate ≥3× before quoting
-the aggregate. Full write-up: `docs/traces/2026-07-21_netbox-benchmark-v4_graphql.md`.
+**Measured A/B verdict (netbox-benchmark-v4, re-run under deepagents 0.7.5, 2026-08-22, one
+run/arm — supersedes the 0.6.10 A/B):** GraphQL routing is a correctness win on cross-domain /
+aggregation queries, and **under 0.7.5 it is no longer a tool-call cost trade** (this run it was
+cheaper). The `site-comparison` IP-allocation trap — which hallucinated a different fabricated
+utilization % on every MCP-only run (7.7 / 17.6 / 100 / 23.2%) — scored **0.0 → 1.0 correctness
+(flash)** with GraphQL; multi-site-VLAN went 0.0 → 1.0 (pro) and 0.5 → 1.0 (flash). Combined
+correctness 0.667 → 0.75; combined tool calls **15.1 → 12.2** (flash 18.5 → 12.8 — the ~2× cost
+seen on 0.6.10 did NOT recur; leaner 0.7 prompts). **Over-routing persists (open item):** flash
+over-routed a simple `device-detail` lookup to GraphQL (0.5 → 0.0; pro 1.0 → 0.5). Verdict: keep
+GraphQL for cross-domain; tighten routing so simple lookups stay on MCP; replicate ≥3× before
+quoting the aggregate. Full write-ups: `docs/traces/2026-08-22_netbox-benchmark-v4_d075-graphql.md`
+(current) and `2026-07-21_netbox-benchmark-v4_graphql.md` (original 0.6.10 A/B).
 
 ---
 
