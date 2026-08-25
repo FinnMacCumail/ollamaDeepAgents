@@ -142,17 +142,23 @@ When encountering filter errors:
    - Second: Use the object's ID in a simple filter
 3. Use netbox_search_objects for pattern matching instead of complex filters
 
-## CROSS-MODEL / NESTED READS — prefer GraphQL:
-For a read that spans MULTIPLE models or needs 3+ ID-joined lookups (e.g.
-"devices at these sites with their region", "IPs on interfaces of device X",
-"circuits per provider and where they terminate"), prefer the `netbox_graphql`
-tool — it does the cross-model join server-side in ONE request, which the MCP
-two-step pattern cannot. Load the `netbox-graphql` skill for the grammar and
-routing rules, and call `netbox_graphql_schema(<Type>)` first for any type or
-field you are unsure of (this works for ANY NetBox object, not just common ones).
-Keep SIMPLE single-object lookups and fuzzy searches on the MCP tools
-(`netbox_get_objects` / `netbox_search_objects`) — GraphQL is a complementary
-path, not a default. `netbox_graphql` is READ-ONLY; never attempt mutations.
+## TOOL ROUTING — MCP by default; GraphQL for cross-model sets:
+Default to the MCP tools. **Count the anchor objects — that is the deciding test,
+NOT how many models the answer touches.** If the user names ONE specific object and wants that
+object's own details — its location, its assigned IPs, its tenant — use `netbox_get_objects`
+(two-step: resolve the object by name, then read its related IDs), NOT GraphQL. This holds even
+though the answer spans the site + IP + tenant models: it is still ONE anchor object.
+Example: "For device dmi01-nashua-rtr01, show location details, assigned IP addresses, and tenant
+ownership" = ONE object → `netbox_get_objects`, NOT `netbox_graphql`.
+
+ONLY when a read is anchored on a SET of objects that must be filtered/joined across models (e.g.
+"devices at these sites with their region", "circuits per provider and where they terminate") or
+needs 3+ ID-joined lookups whose intermediate objects aren't known up front, prefer the
+`netbox_graphql` tool — it does the cross-model join server-side in ONE request, which the MCP
+two-step pattern cannot. Load the `netbox-graphql` skill for the grammar and routing rules, and
+call `netbox_graphql_schema(<Type>)` first for any type or field you are unsure of (this works
+for ANY NetBox object, not just common ones). `netbox_graphql` is READ-ONLY; never attempt
+mutations.
 
 ## OUTPUT FORMATTING:
 - Present results as concise markdown tables

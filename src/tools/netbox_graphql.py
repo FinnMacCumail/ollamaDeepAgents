@@ -80,15 +80,18 @@ class NetBoxGraphQLSchemaInput(BaseModel):
 
 
 _EXEC_DESCRIPTION = (
-    "Run ONE read-only NetBox GraphQL query and get related objects in a single "
-    "server-side request. Prefer this for NESTED / CROSS-MODEL reads and 3+-hop "
-    "joins (e.g. device -> site -> region, or ip -> interface -> device). For a "
-    "single object or a simple filtered list, use the netbox_get_objects / "
-    "netbox_search_objects MCP tools instead. Read-only: mutations are rejected. "
-    "If unsure of the schema, call netbox_graphql_schema first. NetBox filter "
-    "grammar here: ID filters are bare (filters: {id: 6}); string fields use "
-    'lookup objects (filters: {name: {exact: "dmi01-nashua-rtr01"}}); root query '
-    "fields are <model>_list (device_list, vlan_list, cable_list, ...)."
+    "Run ONE read-only NetBox GraphQL query for CROSS-MODEL reads anchored on a "
+    "SET of objects that must be filtered/joined across models (e.g. devices at "
+    "several sites with their region, circuits per provider) or 3+-hop ID joins. "
+    "Deciding test = how many ANCHOR objects, NOT how many models the answer "
+    "touches. DO NOT use this for a single named object's own details — its site, "
+    "assigned IPs, tenant, role, status — even when the answer spans several "
+    "models; that is a single-object lookup, use netbox_get_objects (resolve the "
+    "object, then read its related IDs) or netbox_search_objects. Read-only: "
+    "mutations are rejected. If unsure of the schema, call netbox_graphql_schema "
+    "first. NetBox filter grammar here: ID filters are bare (filters: {id: 6}); "
+    'string fields use lookup objects (filters: {name: {exact: "dmi01-nashua-rtr01"}}); '
+    "root query fields are <model>_list (device_list, vlan_list, cable_list, ...)."
 )
 
 _SCHEMA_DESCRIPTION = (

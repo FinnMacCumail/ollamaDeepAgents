@@ -21,18 +21,29 @@ the schema.
 
 ## ROUTING — which tool?
 
+**First, count the anchor objects — this is the deciding test, NOT how many models
+the answer touches.** If the query names exactly ONE specific object (by name or ID) and asks
+for that object's own fields plus its directly-attached related summary (its site, rack, tenant,
+role, status, assigned IPs), it is a **single-object lookup → MCP `netbox_get_objects`** —
+**even when the answer spans several models.** Listing a device's site + IPs + tenant is still
+ONE object; resolve the object, then read its related IDs in a second MCP call. Reach for
+`netbox_graphql` **only** when the query is anchored on a SET/class of objects that must be
+filtered or joined across models, or needs 3+ ID-joins whose intermediate objects aren't known
+up front.
+
 | Query shape | Tool |
 |---|---|
-| One object, or a simple filtered list | MCP `netbox_get_objects` |
+| ONE named object + its own attributes / related summary (**even across models**) | MCP `netbox_get_objects` |
+| "Show device X's location, IPs, and tenant" (ONE named object) | MCP `netbox_get_objects` — **NOT** GraphQL |
 | Partial / fuzzy name search | MCP `netbox_search_objects` |
-| Nested relationships across models (A → B → C) | **`netbox_graphql`** |
-| 3+ sequential reads joined by IDs | **`netbox_graphql`** |
+| A SET of objects filtered/joined across models (A → B → C for *many* items) | **`netbox_graphql`** |
+| 3+ sequential reads joined by IDs (intermediates unknown up front) | **`netbox_graphql`** |
 | An unfamiliar type or field | **`netbox_graphql_schema(<Type>)` first**, then `netbox_graphql` |
-| Counts / percentages / "utilization" | `netbox_graphql` to fetch, then compute **client-side** (see AGGREGATIONS) |
+| Counts / percentages / "utilization" over a set | `netbox_graphql` to fetch, then compute **client-side** (see AGGREGATIONS) |
 | Create / update / delete / allocate | Refuse — this agent and this tool are READ-ONLY |
 
-GraphQL is not the default. If a single `netbox_get_objects` call answers it,
-use that — it is cheaper.
+GraphQL is not the default. If a single `netbox_get_objects` call (or a two-step MCP lookup)
+answers it, use that — it is cheaper.
 
 ## THE GENERALIZATION RULE (how you handle ANY object type)
 
