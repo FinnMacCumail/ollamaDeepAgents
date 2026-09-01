@@ -106,11 +106,17 @@ seen on 0.6.10 did NOT recur; leaner 0.7 prompts). The one regression — over-r
 `device-detail` lookup to GraphQL (flash 0.5 → 0.0; pro 1.0 → 0.5) — was **fixed by the
 2026-08-25 anchor-object routing tightening:** device-detail recovered to **1.0 on both models**
 and is now MCP-routed (pro `netbox_get_objects`-only, zero GraphQL — trajectory-verified), with
-the cross-domain queries *still* routing to GraphQL (no over-correction). Combined correctness
-rose to 0.833. Verdict: GraphQL is a complementary correctness win for cross-domain; simple
-lookups now stay on MCP; **still replicate ≥3× before quoting the aggregate** (the two noisiest
-queries dip on single runs). Full write-ups:
-`docs/traces/2026-08-25_netbox-benchmark-v4_d075-graphql-tightened.md` (current),
+the cross-domain queries *still* routing to GraphQL (no over-correction). **Confirmed across 3×
+replication (2026-08-25):** device-detail holds (flash 3/3 runs = 1.0, pro 2/3 = 1.0 and
+MCP-routed; the one pro run that slipped to GraphQL scored 0.5 — proving MCP→right,
+GraphQL→wrong on single objects), cross-domain queries route to GraphQL every run, and the
+stabilized combined correctness is **≈0.82** (MCP-only 0.667 → GraphQL 0.75 → GraphQL+tightened
+≈0.82 — the best configuration measured). Two replication findings (NOT routing bugs): pro
+device-detail is 2/3 deterministic (escalate to `LLMToolSelectorMiddleware` only if airtight
+routing is ever required — not needed at 2/3), and `tenant-site-summary` is a persistent
+model-accuracy weak spot (pro ~0.47) unrelated to GraphQL. Full write-ups:
+`docs/traces/2026-08-25_netbox-benchmark-v4_tightened-replication-3x.md` (3× summary),
+`..._d075-graphql-tightened.md` + `..._d075-tightened-r2/r3.md` (the three runs),
 `2026-08-22_netbox-benchmark-v4_d075-graphql.md` (pre-tightening), and
 `2026-07-21_netbox-benchmark-v4_graphql.md` (original 0.6.10 A/B).
 
