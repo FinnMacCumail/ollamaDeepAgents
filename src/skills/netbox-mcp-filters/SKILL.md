@@ -10,6 +10,14 @@ priority: high
 
 This skill provides essential knowledge about NetBox MCP server filter limitations and how to work around them. Following these patterns will prevent filter errors and ensure successful queries.
 
+> **Single named object? Stay here.** Count the anchor objects, not the models the answer
+> touches. A query about ONE named object — even if you need its site, IPs, and tenant — is a
+> single-object lookup: keep it on the MCP tools (resolve the object, then read its related IDs
+> in a second call). Only when a query is anchored on a SET of objects that must be filtered or
+> joined across models, or needs 3+ ID-joined lookups, prefer the `netbox_graphql` tool — see
+> the **`netbox-graphql`** skill. The MCP patterns here are also the right choice for fuzzy
+> search and pagination.
+
 ## HANDLING PAGINATED RESPONSES
 
 NetBox returns paginated results. A response shaped like this is INCOMPLETE:

@@ -58,11 +58,12 @@ for _provider in ("ollama", "openai"):
 
 from ..middleware.filter_recovery import FilterErrorRecoveryMiddleware, MetricsMiddleware
 from ..middleware.metrics import QueryMetricsMiddleware
+from ..tools.netbox_graphql import build_graphql_tools
 from ..tools.netbox_tools import NetBoxToolWrapper, create_netbox_mcp_client
 from ..utils.config import NetBoxConfig, QueryMetrics, load_netbox_config
 from ..utils.logging import get_logger
-from .ollama_config import create_ollama_model
 from .llamacpp_config import create_llamacpp_model
+from .ollama_config import create_ollama_model
 
 logger = get_logger(__name__)
 
@@ -140,6 +141,24 @@ When encountering filter errors:
    - First: Get the parent/related object by name or ID
    - Second: Use the object's ID in a simple filter
 3. Use netbox_search_objects for pattern matching instead of complex filters
+
+## TOOL ROUTING — MCP by default; GraphQL for cross-model sets:
+Default to the MCP tools. **Count the anchor objects — that is the deciding test,
+NOT how many models the answer touches.** If the user names ONE specific object and wants that
+object's own details — its location, its assigned IPs, its tenant — use `netbox_get_objects`
+(two-step: resolve the object by name, then read its related IDs), NOT GraphQL. This holds even
+though the answer spans the site + IP + tenant models: it is still ONE anchor object.
+Example: "For device dmi01-nashua-rtr01, show location details, assigned IP addresses, and tenant
+ownership" = ONE object → `netbox_get_objects`, NOT `netbox_graphql`.
+
+ONLY when a read is anchored on a SET of objects that must be filtered/joined across models (e.g.
+"devices at these sites with their region", "circuits per provider and where they terminate") or
+needs 3+ ID-joined lookups whose intermediate objects aren't known up front, prefer the
+`netbox_graphql` tool — it does the cross-model join server-side in ONE request, which the MCP
+two-step pattern cannot. Load the `netbox-graphql` skill for the grammar and routing rules, and
+call `netbox_graphql_schema(<Type>)` first for any type or field you are unsure of (this works
+for ANY NetBox object, not just common ones). `netbox_graphql` is READ-ONLY; never attempt
+mutations.
 
 ## OUTPUT FORMATTING:
 - Present results as concise markdown tables
@@ -254,6 +273,12 @@ class NetBoxDeepAgent:
         print("DEBUG: Getting wrapped tools...", flush=True)
         tools = await self.tool_wrapper.get_tools()
         print(f"DEBUG: Got {len(tools)} tools", flush=True)
+
+        # Append the standalone read-only GraphQL tools (netbox_graphql +
+        # netbox_graphql_schema). These are NOT wrapped by NetBoxToolWrapper, so
+        # they bypass FilterValidator by design — GraphQL has its own grammar.
+        tools.extend(build_graphql_tools(self.netbox_config))
+        print(f"DEBUG: Total {len(tools)} tools (incl. GraphQL)", flush=True)
 
         # Create LLM model based on backend
         print(f"DEBUG: Creating {self.backend} model...", flush=True)

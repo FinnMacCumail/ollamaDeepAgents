@@ -75,6 +75,51 @@ loop continues rather than crashing.
 it is **transparent to PTC** — tool calls made from inside a QuickJS `eval` block also surface
 these structured errors. See `docs/development/2026-06-03_quickjs-code-interpreter-research.md` §14.
 
+**Read-only GraphQL tools (`netbox_graphql.py`, 2026-07-20):** `netbox_graphql` +
+`netbox_graphql_schema` are appended to the tool list **standalone** — they are NOT wrapped by
+`NetBoxToolWrapper`, so they bypass `FilterValidator` by design (GraphQL has its own grammar).
+They reuse the same `TOOL_VALIDATION_ERROR:` / `TOOL_API_ERROR:` structured-error convention.
+Read-only is enforced by `graphql-core` AST inspection (mutations rejected before any HTTP);
+query-cost limits (depth/size/timeout, env-overridable) are the primary safety surface. See
+`docs/development/2026-07-20_netbox-graphql-read-tool.md`.
+
+**Routing (PRP 2, `src/skills/netbox-graphql/`, 2026-07-21; tightened 2026-08-25):** the
+`netbox-graphql` skill + a `NETBOX_SYSTEM_PROMPT` section + the tool description teach routing via
+the **anchor-object rule**: *count the anchor objects, not the models the answer touches.* A query
+about ONE named object — even if the answer spans its site + IPs + tenant — is a single-object
+lookup and stays on the MCP tools (resolve, then read related IDs); `netbox_graphql` is only for
+reads anchored on a SET of objects filtered/joined across models, or 3+ ID-joins. This
+anchor-object framing (leading, not trailing, in all four routing sites) replaced the earlier
+"nested/related data → GraphQL" wording that mis-routed single-object lookups. Generalization to
+*any* NetBox type comes from teaching the universal Strawberry grammar (root = snake_case model +
+`_list`, IDs bare, strings `{exact:}`/`{in_list:}`, nested filters) + **runtime introspection** via
+`netbox_graphql_schema(<Type>)` — NOT a fixed schema. GraphQL is a complementary path, never the default.
+
+**Measured A/B verdict (netbox-benchmark-v4, re-run under deepagents 0.7.5, 2026-08-22, one
+run/arm — supersedes the 0.6.10 A/B):** GraphQL routing is a correctness win on cross-domain /
+aggregation queries, and **under 0.7.5 it is no longer a tool-call cost trade** (this run it was
+cheaper). The `site-comparison` IP-allocation trap — which hallucinated a different fabricated
+utilization % on every MCP-only run (7.7 / 17.6 / 100 / 23.2%) — scored **0.0 → 1.0 correctness
+(flash)** with GraphQL; multi-site-VLAN went 0.0 → 1.0 (pro) and 0.5 → 1.0 (flash). Combined
+correctness 0.667 → 0.75; combined tool calls **15.1 → 12.2** (flash 18.5 → 12.8 — the ~2× cost
+seen on 0.6.10 did NOT recur; leaner 0.7 prompts). The one regression — over-routing the simple
+`device-detail` lookup to GraphQL (flash 0.5 → 0.0; pro 1.0 → 0.5) — was **fixed by the
+2026-08-25 anchor-object routing tightening:** device-detail recovered to **1.0 on both models**
+and is now MCP-routed (pro `netbox_get_objects`-only, zero GraphQL — trajectory-verified), with
+the cross-domain queries *still* routing to GraphQL (no over-correction). **Confirmed across 3×
+replication (2026-08-25):** device-detail holds (flash 3/3 runs = 1.0, pro 2/3 = 1.0 and
+MCP-routed; the one pro run that slipped to GraphQL scored 0.5 — proving MCP→right,
+GraphQL→wrong on single objects), cross-domain queries route to GraphQL every run, and the
+stabilized combined correctness is **≈0.82** (MCP-only 0.667 → GraphQL 0.75 → GraphQL+tightened
+≈0.82 — the best configuration measured). Two replication findings (NOT routing bugs): pro
+device-detail is 2/3 deterministic (escalate to `LLMToolSelectorMiddleware` only if airtight
+routing is ever required — not needed at 2/3), and `tenant-site-summary` is a persistent
+model-accuracy weak spot (pro ~0.47) unrelated to GraphQL. Full write-ups:
+`docs/traces/2026-08-25_netbox-benchmark-v4_tightened-replication-3x.md` (3× summary),
+`..._d075-graphql-tightened.md` + `..._d075-tightened-r2/r3.md` (the three runs),
+`2026-08-22_netbox-benchmark-v4_d075-graphql.md` (pre-tightening), and
+`2026-07-21_netbox-benchmark-v4_graphql.md` (original 0.6.10 A/B).
+
 ---
 
 ## 4. DeepAgents 0.7.5 framework state

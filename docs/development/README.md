@@ -22,6 +22,23 @@ This directory contains:
 - **Eval gate passed:** no correctness regression vs the 0.6.10 baseline (combined mean 0.70→0.667, flat within variance; flash −0.167, pro +0.10). Negative-finding queries healthy (Jimbob VLAN 100 = 1.0/1.0 both models).
 - `langchain-quickjs 0.2.0` now pins `<0.7` — harmless (deferred package, only used by `tests/spike/`).
 
+### [2026-08-10: LangChain Ecosystem vs. the NetBox Cloud Platform MCP](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md)
+**Research (5 parallel agents):** maps the current (Aug 2026) LangChain/LangGraph/DeepAgents/LangSmith ecosystem against NetBox Labs' Cloud-only "Platform MCP Server" to decide what's reproducible on this self-hosted, read-only stack.
+**Key points:**
+- Cloud's edge = tool breadth (~100 tools) + Code Mode, both of which only pay off at that breadth. **Code Mode reconfirmed "skip"** (Anthropic τ²-bench: sequential single-call workloads gain nothing, ~8% more cost) — the **already-shipped GraphQL tool is the right lever** for round-trips.
+- Reproducible & self-hostable: **subagents** (scoping + the planned model-handoff routing — the Aug-5 LangChain "SRE agent" blog is the blueprint), **Skills** (already in use), **`RubricMiddleware`** (structured self-correction), server-side tool generation from NetBox OpenAPI/GraphQL (LangChain can't add tools mid-run, #33808).
+- **Skip** all hosted products (Managed Deep Agents, LLM Gateway, Context Hub, hosted LangSmith) under the privacy mandate; use `openevals`/`agentevals` (MIT) + OTel for on-prem eval parity.
+**Actionable task (§8):** upgrade `deepagents` 0.6.10 → **0.7.5** (crosses the 0.7.0 major: planning opt-in, empty base prompt ~65% token cut, `FilesystemMiddleware` read-only allowlist) — behind the eval gate. ~½–1 day.
+
+### [2026-07-20: NetBox GraphQL Read Tool (PRP 1)](2026-07-20_netbox-graphql-read-tool.md)
+**Execution:** First PRP-driven feature since the harvested PRP workflow was added. Adds two standalone **read-only** GraphQL tools (`netbox_graphql`, `netbox_graphql_schema`) so the agent can retrieve nested/cross-model data in one server-side request instead of multi-hop MCP decomposition.
+**Key points:**
+- Standalone tools appended in `netbox_agent.py` — NOT wrapped by `NetBoxToolWrapper`, so they bypass `FilterValidator` by design (GraphQL has its own grammar).
+- Read-only via `graphql-core` AST inspection (mutations/subscriptions/malformed rejected before any HTTP); but the *primary* safety surface is query-cost limits (depth/size/timeout), since the endpoint is read-only server-side anyway.
+- Live-verified: introspection enabled; legacy `Authorization: Token` auth; 4.3/4.4 Strawberry filter grammar (bare `id: 6`, string `{exact:}`, `<model>_list` roots).
+- 23/23 new unit tests pass; regression-neutral (same 7 pre-existing integration failures with/without the change).
+**Not done (PRP 2):** routing skill + GraphQL-vs-MCP A/B on `netbox-benchmark-v3`. No performance claim yet.
+
 ### [2026-06-14: DeepAgents 0.5.6 → 0.6.10 Upgrade](2026-06-14_deepagents-0.6-upgrade.md)
 **Execution:** First Tier 2 item from the LangSmith eval research executed. Upgrades `deepagents` from 0.5.6 → 0.6.10 (also bumps langchain 1.2.17→1.3.9, langgraph 1.1.10→1.2.5, langsmith 0.8.0→0.8.15).
 **Key findings:**
@@ -107,6 +124,8 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
+| 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
 | 2026-08-11 | DeepAgents 0.6.10 → 0.7.5 upgrade | [2026-08-11_deepagents-0.7.5-upgrade.md](2026-08-11_deepagents-0.7.5-upgrade.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
