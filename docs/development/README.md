@@ -13,6 +13,15 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-09-15: netbox-benchmark-v5 Dataset Expansion Design](2026-09-15_netbox-benchmark-v5-expansion-design.md)
+**Design (spec, not yet built):** how far to expand the eval dataset (currently 6 examples) and on what basis — for trustworthy A/B numbers AND to serve the upcoming model-handoff routing (which needs difficulty-graded examples).
+**Key points:**
+- **6 is too small** on three grounds: statistical (n=6 → 95% CI ±0.32–0.40), coverage (whole NetBox domains untested), stratification (1 example/category = no per-tier routing signal).
+- **Target: ~90–150 examples, stratified 30–50 per difficulty tier** (simple/medium/advanced), from a ~22-archetype coverage checklist. Two free power levers: **paired test** (same questions across arms) + **breadth-over-replication** (more questions beats more runs).
+- **Difficulty taxonomy = the routing decision**; objective discriminator = NetBox's no-multi-hop-filter rule. Negative-finding + capacity-math queries are where cheap models fail → weight for escalation tests.
+- **Data-enrichment prerequisite:** demo data too thin for the advanced tier — expansion + enrichment go together.
+- **Measured cost (timing probe):** 6-q pair = 12m44s / ~1.86M tokens; **90-q pair run ≈ 3.2 hrs / ~28M tokens** (≈$0 on flat-rate Pro). Expanding lets replication drop from 3× → 1–2×.
+
 ### [2026-08-11: DeepAgents 0.6.10 → 0.7.5 Upgrade](2026-08-11_deepagents-0.7.5-upgrade.md)
 **Execution:** Crosses the 0.7.0 major (also bumps langchain 1.3.9→1.3.14, langchain-core 1.4.7→1.5.3, langsmith 0.8.15→0.10.17). Tracks the current subagent + `RubricMiddleware` APIs for the planned model-handoff routing.
 **Key points:**
@@ -127,6 +136,7 @@ Original feature specification and architecture planning:
 | 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
 | 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
+| 2026-09-15 | netbox-benchmark-v5 dataset expansion design | [2026-09-15_netbox-benchmark-v5-expansion-design.md](2026-09-15_netbox-benchmark-v5-expansion-design.md) |
 | 2026-08-11 | DeepAgents 0.6.10 → 0.7.5 upgrade | [2026-08-11_deepagents-0.7.5-upgrade.md](2026-08-11_deepagents-0.7.5-upgrade.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
 | 2026-06-08 | Self-hosting GPU rental research | [2026-06-08_self-hosting-gpu-rental-research.md](2026-06-08_self-hosting-gpu-rental-research.md) |
