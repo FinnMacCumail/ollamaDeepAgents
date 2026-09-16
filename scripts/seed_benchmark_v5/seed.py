@@ -50,7 +50,7 @@ LAYER_ORDER = [
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
 IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
-               "ipfill", "circuits", "power", "virt", "cabling"}
+               "ipfill", "circuits", "power", "virt", "cabling", "defects"}
 
 
 # --------------------------------------------------------------------------
@@ -1197,6 +1197,252 @@ def layer_cabling(s: NetBoxSeeder, state: dict) -> None:
     state["cables_skipped"] = skipped
 
 
+# --------------------------------------------------------------------------
+# layer: defects  (emit the audit answer key, COMPUTED from live data)
+# --------------------------------------------------------------------------
+# The blueprint's `expect` numbers are TARGETS, not answers. D1 already proved
+# they diverge: 3 active devices without a primary IP, but 4 across all
+# statuses. So every figure here is read back from the API, and the SCOPE is
+# recorded alongside it -- reference-answer ambiguity is what bit v4.
+def layer_defects(s: NetBoxSeeder, state: dict) -> None:
+    import json
+    from pathlib import Path
+
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tid = tenant[0]["id"]
+    sites = s.get("dcim/sites", tenant_id=tid)
+    site_ids = [x["id"] for x in sites]
+
+    devices: dict[str, dict] = {}
+    for sid in site_ids:
+        for d in s.get("dcim/devices", site_id=sid):
+            devices[d["name"]] = d
+
+    passive = {"48-Port Patch Panel", "48-Pair Fiber Panel", "AP7901"}
+    active = [d for d in devices.values() if d["status"]["value"] == "active"]
+
+    def no_primary(pool):
+        return sorted(d["name"] for d in pool
+                      if not d.get("primary_ip4")
+                      and (d.get("device_type") or {}).get("model") not in passive)
+
+    findings: dict[str, dict] = {}
+
+    # D1 -- scope-dependent, so BOTH scopes are recorded
+    findings["D1"] = {
+        "description": "Device with no primary IP (excluding passive panels/PDUs)",
+        "scoped_to_active": no_primary(active),
+        "all_statuses": no_primary(devices.values()),
+        "note": "scope MUST be stated in the question; the two answers differ",
+    }
+
+    # D2 -- IPs whose address has no containing prefix anywhere
+    orphans = []
+    for addr in ["10.61.0.10", "10.62.0.1"]:
+        ip = s.get("ipam/ip-addresses", address=addr)
+        if ip and s.count("ipam/prefixes", contains=addr) == 0:
+            ao = ip[0].get("assigned_object") or {}
+            orphans.append({"address": ip[0]["address"],
+                            "device": (ao.get("device") or {}).get("name"),
+                            "interface": ao.get("name")})
+    findings["D2"] = {"description": "IP address with no parent prefix",
+                      "found": orphans, "count": len(orphans)}
+
+    # D6/D7/D9/D10 -- created by the cabling layer, verified here
+    planned = s.get("dcim/cables", status="planned")
+    findings["D7"] = {"description": "Planned cable between active devices",
+                      "count": len(planned),
+                      "labels": [x.get("label") for x in planned]}
+
+    consoles = []
+    for name in ["sea-dc1-core01", "sea-dc1-core02", "sea-dc1-leaf01",
+                 "sea-dc1-leaf02", "sea-dc1-leaf03", "sea-dc1-fw01"]:
+        d = devices.get(name)
+        if not d:
+            continue
+        cps = s.get("dcim/console-ports", device_id=d["id"])
+        if cps and not any(p.get("cable") for p in cps):
+            consoles.append(name)
+    findings["D9"] = {"description": "Console port not connected",
+                      "found": sorted(consoles), "count": len(consoles)}
+
+    single_psu = []
+    for d in devices.values():
+        pps = s.get("dcim/power-ports", device_id=d["id"])
+        if len(pps) >= 2:
+            connected = sum(1 for p in pps if p.get("cable"))
+            if connected == 1:
+                single_psu.append({"device": d["name"], "psus": len(pps),
+                                   "connected": connected})
+    findings["D10"] = {"description": "Only one power supply connected",
+                       "found": single_psu, "count": len(single_psu)}
+
+    # D5 -- intentional duplicates, only possible in the non-unique VRF
+    guest = s.get("ipam/vrfs", name=B.VRF_GUEST["name"])
+    dup = s.get("ipam/prefixes", prefix=C.GUEST_DUP_PREFIX,
+                vrf_id=guest[0]["id"]) if guest else []
+    findings["D5"] = {"description": "Duplicate prefixes (intentional, GUEST VRF)",
+                      "prefix": C.GUEST_DUP_PREFIX, "count": len(dup),
+                      "scopes": [(p.get("scope") or {}).get("name") for p in dup]}
+
+    # D12 -- non-active lifecycle still in service
+    findings["D12"] = {
+        "description": "Non-active lifecycle states",
+        "devices": sorted((d["name"], d["status"]["value"]) for d in devices.values()
+                          if d["status"]["value"] != "active"),
+    }
+
+    # D14 -- HVL-region device with no tenant
+    findings["D14"] = {"description": "Device at an HVL site with no tenant",
+                       "found": sorted(d["name"] for d in devices.values()
+                                       if not d.get("tenant"))}
+
+    # D16 -- empty cluster / host with no VMs / VM with an IP but no primary
+    clusters = s.get("virtualization/clusters", tenant_id=tid)
+    empty = [c["name"] for c in clusters
+             if s.count("virtualization/virtual-machines", cluster_id=c["id"]) == 0]
+    hosts_no_vms = [d["name"] for d in devices.values()
+                    if (d.get("role") or {}).get("slug") == "hypervisor-host"
+                    and s.count("virtualization/virtual-machines",
+                                device_id=d["id"]) == 0]
+    vms_no_primary = [v["name"] for v in
+                      s.get("virtualization/virtual-machines", tenant_id=tid)
+                      if not v.get("primary_ip4")]
+    findings["D16"] = {"description": "Empty cluster / host with no VMs / VM without primary IP",
+                       "empty_clusters": sorted(empty),
+                       "hosts_without_vms": sorted(hosts_no_vms),
+                       "vms_without_primary_ip": sorted(vms_no_primary)}
+
+    # D17 -- decommissioned circuit still terminated
+    stale = []
+    for ci in s.get("circuits/circuits", tenant_id=tid):
+        if ci["status"]["value"] == "decommissioned":
+            t = s.count("circuits/circuit-terminations", circuit_id=ci["id"])
+            if t:
+                stale.append({"cid": ci["cid"], "terminations": t})
+    findings["D17"] = {"description": "Decommissioned circuit still terminated",
+                       "found": stale, "count": len(stale)}
+
+    payload = {
+        "generated": "netbox-benchmark-v5 seed",
+        "tenant": C.TENANT["slug"],
+        "note": ("Values are COMPUTED from the live instance, not the blueprint's "
+                 "targets. Recompute after any restore."),
+        "legitimate_gaps_do_not_flag": B.LEGITIMATE_GAPS,
+        "defects": findings,
+    }
+    out = Path("/home/ola/dev/netboxdev/netbox-snapshots/defects.json")
+    if not s.dry_run:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    print(f"    answer key -> {out}")
+    for k in sorted(findings):
+        v = findings[k]
+        summary = v.get("count")
+        if summary is None:
+            summary = sum(len(x) for x in v.values() if isinstance(x, list))
+        print(f"      {k}: {v['description'][:58]:58} n={summary}")
+    state["defects"] = findings
+
+
+# --------------------------------------------------------------------------
+# layer: journal  (change-history activity phase)
+# --------------------------------------------------------------------------
+# MEASURED CONSTRAINT: after seeding, the change log was ~87% component noise
+# (2,014 of 2,319 rows were template-generated interfaces/ports), and EVERY row
+# was a `create`. So "how many changes happened?" is answered by template noise.
+#
+# This layer therefore emits UPDATE and DELETE actions -- the only actions that
+# are distinguishable from the bulk-create floor -- and touches a small, named
+# set of objects so questions can be scoped by object type and by object.
+#
+# Timestamps CANNOT be backdated through the API (ObjectChange.time is
+# auto_now_add), so every entry lands at seed time. Change questions must use
+# absolute windows or ordering, never "in the last N days".
+def layer_journal(s: NetBoxSeeder, state: dict) -> None:
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tid = tenant[0]["id"]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tid)}
+    devices: dict[str, dict] = {}
+    for site in sites.values():
+        for d in s.get("dcim/devices", site_id=site["id"]):
+            devices[d["name"]] = d
+
+    # ---- 1. UPDATES: status/description changes with a clear "before" -----
+    updates = [
+        ("hq-acc02", {"description": "Scheduled for removal in Q1; do not patch"}),
+        ("spo-br03-ap02", {"description": "RMA raised with vendor"}),
+        ("sea-dc1-leaf04", {"description": "Awaiting management address"}),
+        ("boi-br04-rtr01", {"description": "Staged for BR04 go-live"}),
+        ("sea-dc1-esx09", {"description": "Received, not yet racked"}),
+    ]
+    for name, payload in updates:
+        d = devices.get(name)
+        if d and d.get("description") != payload["description"]:
+            s.patch("dcim/devices", d["id"], payload)
+        elif d:
+            s._tally(s.reused, "dcim/devices (description set)")
+
+    # A commit-rate change gives a "what was the previous value?" question a
+    # real pre-change snapshot in the change log.
+    circuit = s.get("circuits/circuits", cid="EV-MPLS-2004")
+    if circuit and circuit[0].get("commit_rate") != 100000:
+        s.patch("circuits/circuits", circuit[0]["id"], {"commit_rate": 100000})
+    elif circuit:
+        s._tally(s.reused, "circuits/circuits (rate already raised)")
+
+    # A VM resize -- vcpus 4 -> 8, again with a recorded previous value.
+    vm = s.get("virtualization/virtual-machines", name="hvl-app01")
+    if vm and (vm[0].get("vcpus") or 0) != 8:
+        s.patch("virtualization/virtual-machines", vm[0]["id"], {"vcpus": 8})
+    elif vm:
+        s._tally(s.reused, "virtualization/virtual-machines (already resized)")
+
+    # BR04 prefixes move reserved -> active as the site is commissioned.
+    corp = s.get("ipam/vrfs", name=B.VRF_CORP["name"])
+    if corp:
+        p = s.get("ipam/prefixes", prefix="10.60.44.0/24", vrf_id=corp[0]["id"])
+        if p and p[0]["status"]["value"] != "active":
+            s.patch("ipam/prefixes", p[0]["id"], {"status": "active"})
+        elif p:
+            s._tally(s.reused, "ipam/prefixes (already activated)")
+
+    # ---- 2. JOURNAL ENTRIES: human-readable operational notes -------------
+    notes = [
+        ("hq-acc02", "warning", "Switch scheduled for decommissioning; uplink "
+                                "remains patched until the replacement lands."),
+        ("sea-dc1-esx05", "info", "Second PSU feed pending electrician visit."),
+        ("sea-dc1-leaf03", "warning", "Console cable missing after rack tidy."),
+        ("boi-br04-rtr01", "info", "BR04 build in progress; MPLS circuit is "
+                                   "still provisioning."),
+    ]
+    for name, kind, comment in notes:
+        d = devices.get(name)
+        if not d:
+            continue
+        existing = s.get("extras/journal-entries",
+                         assigned_object_type="dcim.device",
+                         assigned_object_id=d["id"])
+        if existing:
+            s._tally(s.reused, "extras/journal-entries")
+            continue
+        s.create("extras/journal-entries", {
+            "assigned_object_type": "dcim.device",
+            "assigned_object_id": d["id"],
+            "kind": kind, "comments": comment,
+        })
+
+    # ---- 3. DELETE: an AP is replaced, leaving a delete in the log --------
+    doomed = s.get("dcim/devices", name="por-br02-ap01")
+    if doomed:
+        s.delete("dcim/devices", doomed[0]["id"])
+        s._tally(s.created, "dcim/devices (DELETED por-br02-ap01)")
+
+
 LAYERS = {
     "lookups": layer_lookups,
     "org": layer_org,
@@ -1209,6 +1455,7 @@ LAYERS = {
     "power": layer_power,
     "virt": layer_virt,
     "cabling": layer_cabling,
+    "defects": layer_defects,
 }
 
 
