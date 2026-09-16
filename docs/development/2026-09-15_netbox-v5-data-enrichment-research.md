@@ -339,6 +339,13 @@ Device types come from `netbox-community/devicetype-library` via `Device-Type-Li
 - **No backdating via the API.** `ObjectChange.time`, `created` and `last_updated` are set automatically and
   not editable. Timestamps are the seed time. Anchor change questions to **absolute** windows, and freeze
   the snapshot.
+- **Change-log rows are ~87% component noise (measured 2026-09-16).** After seeding 70 devices, the log held
+  2,319 rows: **1,113 `dcim.interface`**, 432 `frontport`, 291 `rearport`, 96 `poweroutlet`, 81 `powerport`
+  — all auto-generated from device-type templates — against only 70 `dcim.device`, 42 `ipam.prefix` and
+  31 `ipam.vlan`. Every row was `create`.
+  - Consequence: *"how many changes were made?"* is answered by template noise, not by meaningful edits.
+    Change-history questions **must filter by `changed_object_type`**, and the activity phase must generate
+    **update/delete** actions so real edits are distinguishable from this bulk-create floor.
   - Backdating is only possible with `nbshell` `queryset.update(time=…)`. That is *falsified* audit data:
     lab-only, and documented if used.
 - **Features not in 4.3.** `changelog_message` arrived in **4.4**, and VirtualMachineType in **4.6**. Don't
