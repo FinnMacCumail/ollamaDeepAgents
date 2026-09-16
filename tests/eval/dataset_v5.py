@@ -114,6 +114,11 @@ class BenchmarkExampleV5:
 # --------------------------------------------------------------------------
 # Validation — run before any example reaches LangSmith
 # --------------------------------------------------------------------------
+# A "<number> <noun>" entity, e.g. "13 sites" / "6 prefixes". Fragile: a correct
+# answer often inserts a qualifier ("13 Dunder-Mifflin sites", "6 IP prefixes"),
+# which breaks the substring match even though the answer is right.
+_COUNT_PHRASE = re.compile(r"\d+\s+[a-z][a-z-]*s?", re.I)
+
 _BANNED_TEMPORAL = (
     "last 7 days", "last week", "this week", "recently", "today",
     "currently", "right now", "how long ago", " still ", " now ",
@@ -165,6 +170,19 @@ def validate_examples(examples) -> tuple[list[str], list[str]]:
             if "%" in e:
                 errs.append(f"{tag}: entity {e!r} contains '%' which normalises "
                             "away; put percentages in reference_answer instead")
+            # MEASURED (v5 smoke run, 2026-09-16): a "<number> <noun>" entity is
+            # fragile because a correct answer often slots a qualifier between
+            # the two -- "13 sites" missed "13 Dunder-Mifflin sites", and
+            # "6 prefixes" missed "6 IP prefixes". Both answers were CORRECT
+            # (correctness 1.0) yet scored entity_coverage 0.0. Rule A1 proves a
+            # perfect REFERENCE scores 1.0; it does not prove a correct ANSWER
+            # does. Prefer a proper noun / identifier the answer must name.
+            if _COUNT_PHRASE.fullmatch(e.strip()):
+                warns.append(
+                    f"{tag}: entity {e!r} is a '<number> <noun>' phrase -- a "
+                    "correct answer may insert a qualifier between them. Prefer "
+                    "an identifier (device/site/rack name, serial), or drop the "
+                    "entity and let the judges score the figure.")
 
         if not ex.expected_entities and ex.answer_type != "absence":
             warns.append(f"{tag}: no expected_entities (entity_coverage -> None)")
@@ -249,10 +267,13 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
     ),
     BenchmarkExampleV5(
         question="How many IP prefixes are scoped to site HVL-SEA-HQ?",
-        expected_entities=("6 prefixes",),
+        # No entity: every "<number> prefixes" phrasing is fragile (the agent
+        # wrote "6 IP prefixes"). entity_coverage returns None here and the
+        # figure is scored by correctness_judge instead.
+        expected_entities=(),
         reference_answer=(
             "ANSWER: 6 prefixes are scoped to site HVL-SEA-HQ.\n"
-            "ACCEPTABLE VARIANTS: six.\n"
+            "ACCEPTABLE VARIANTS: six; 6 IP prefixes.\n"
             "CONTRADICTIONS: any other count; reporting the tenant-wide total of 42."
         ),
         category="site-prefix-count",
@@ -329,9 +350,9 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
     ),
     BenchmarkExampleV5(
         question="Is rack DC1-R04 empty, or does it hold mounted devices?",
-        expected_entities=("is empty", "0 mounted devices"),
+        expected_entities=("is empty", "no mounted devices"),
         reference_answer=(
-            "ANSWER: Rack DC1-R04 is empty -- it holds 0 mounted devices.\n"
+            "ANSWER: Rack DC1-R04 is empty -- it holds no mounted devices (0).\n"
             "ACCEPTABLE VARIANTS: none; zero; nothing mounted.\n"
             "CONTRADICTIONS: naming any device as mounted in it; any non-zero count; "
             "reporting 141, which is what NetBox returns for the invalid filter "
@@ -346,10 +367,10 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Does cluster HVL-SEA-HQ-EDGE have any virtual machines assigned, "
             "or is it unused?"
         ),
-        expected_entities=("0 virtual machines",),
+        expected_entities=("no virtual machines",),
         reference_answer=(
-            "ANSWER: Cluster HVL-SEA-HQ-EDGE has 0 virtual machines assigned; "
-            "it is an empty cluster.\n"
+            "ANSWER: Cluster HVL-SEA-HQ-EDGE has no virtual machines assigned "
+            "(a count of 0); it is an empty cluster.\n"
             "ACCEPTABLE VARIANTS: none; zero; unused.\n"
             "CONTRADICTIONS: naming any VM as belonging to it; any non-zero count."
         ),
@@ -421,9 +442,9 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Which devices belonging to tenant Dunder-Mifflin, Inc. have a serial "
             "number recorded in NetBox?"
         ),
-        expected_entities=("None of the 39",),
+        expected_entities=("0 of 39",),
         reference_answer=(
-            "ANSWER: None of the 39 Dunder-Mifflin devices has a serial number "
+            "ANSWER: 0 of 39 Dunder-Mifflin devices have a serial number "
             "recorded; the serial field is empty on every one.\n"
             "ACCEPTABLE VARIANTS: zero; no devices.\n"
             "CONTRADICTIONS: naming any specific device as having a serial; quoting "
@@ -436,12 +457,17 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
     ),
     BenchmarkExampleV5(
         question="How many Dunder-Mifflin sites have a VLAN with VID 100 defined?",
-        expected_entities=("13 sites",),
+        # DM-NYC is data-derived, not phrasing-derived: any correct answer must
+        # account for the one site that lacks the VLAN. Preferred over the
+        # fragile "13 sites" (the agent wrote "13 Dunder-Mifflin sites").
+        expected_entities=("DM-NYC",),
         reference_answer=(
-            "ANSWER: 13 sites in Dunder-Mifflin, Inc. each define a VLAN with VID 100.\n"
+            "ANSWER: 13 of the 14 Dunder-Mifflin sites define a VLAN with VID 100; "
+            "DM-NYC is the only one that does not.\n"
             "ACCEPTABLE VARIANTS: thirteen.\n"
-            "CONTRADICTIONS: any other count; claiming Halvorsen Logistics also uses "
-            "VID 100, which it does not."
+            "CONTRADICTIONS: any other count; naming a different site as the "
+            "exception; claiming Halvorsen Logistics also uses VID 100, which it "
+            "does not."
         ),
         category="vlan-vid-count",
         difficulty="simple", island="demo", answer_type="count", domain="ipam",
