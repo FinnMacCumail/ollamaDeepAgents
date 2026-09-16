@@ -412,6 +412,15 @@ DEFECTS = {
                         "sea-dc1-esx05 (no VMs pinned)", "hvl-app08"], "expect": 3},
     "D17": {"desc": "Decommissioned circuit still terminated",
             "objects": ["EV-MPLS-1999"], "expect": 1},
+    # EMERGENT, not planted: deleting por-br02-ap01 in the journal layer removed
+    # its CableTermination but left the Cable alive with an empty A side, so
+    # por-br02-sw01:Gi1/0/24 still reports as cabled to nothing. Verified as the
+    # only half-terminated cable on the instance. Kept (it is the community
+    # `find_orphaned_cables` class and a good "what is connected to this port?"
+    # trap) and recorded here so the answer key does not penalise finding it.
+    "D18": {"desc": "Half-terminated (orphaned) cable -- one side empty",
+            "objects": ["cable 188 (label por-br02-ap01) -> por-br02-sw01:Gi1/0/24"],
+            "expect": 1, "emergent": True},
 }
 
 # Gaps that are CORRECT and must NOT be reported as problems. These make good

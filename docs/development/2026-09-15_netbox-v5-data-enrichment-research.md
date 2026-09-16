@@ -373,6 +373,15 @@ Device types come from `netbox-community/devicetype-library` via `Device-Type-Li
   a VRF with `enforce_unique=false` (hence the GUEST VRF).
 - **Cable paths** are computed synchronously on cable save. A rear port with no cable ends a trace (correct
   for user patches).
+- **Deleting a device leaves its cables half-terminated** (verified 2026-09-16). Removing
+  `por-br02-ap01` deleted the device, its interface, its IP and 13 `CableTermination` rows — but the
+  `Cable` objects themselves survived. Cable 188 remains `status=connected` with an **empty A side**, so
+  `por-br02-sw01:Gi1/0/24` still reports as cabled to a cable that connects nothing.
+  - Consequence for the benchmark: "what is connected to this port?" has a misleading answer, which is a
+    genuinely good trap — but it is **emergent, not planted**, so it must be in the answer key or an agent
+    that correctly reports it gets marked wrong. Adopted as **D18**.
+  - This is the community `find_orphaned_cables` audit class. Any seeder that deletes devices should scan
+    for `a_terminations == [] or b_terminations == []` afterwards.
 - **Orphan cables.** D7's "half-terminated cable" may not be creatable: deleting one termination may delete
   the cable. Verify at build time and drop that defect if so.
 - **Change-log noise.** Components auto-created from device-type templates may generate change-log rows

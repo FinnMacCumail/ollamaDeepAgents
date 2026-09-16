@@ -1316,6 +1316,35 @@ def layer_defects(s: NetBoxSeeder, state: dict) -> None:
                        "hosts_without_vms": sorted(hosts_no_vms),
                        "vms_without_primary_ip": sorted(vms_no_primary)}
 
+    # D18 -- half-terminated ("orphaned") cable.
+    # NOT planted deliberately: deleting a device removes its CableTermination
+    # but leaves the Cable itself alive with one empty side (verified
+    # 2026-09-16 -- por-br02-ap01's removal left cable 188 at A=0, B=1,
+    # status=connected). The far-end port therefore still reports as cabled,
+    # to a cable that connects nothing. This is the community
+    # `find_orphaned_cables` audit class, so it is adopted as a defect rather
+    # than cleaned up -- but it MUST be in the key, or an agent that correctly
+    # reports it would be marked wrong.
+    orphan_cables = []
+    for cab in s.get("dcim/cables"):
+        a = cab.get("a_terminations") or []
+        b = cab.get("b_terminations") or []
+        if not a or not b:
+            far = []
+            for t in (a or b):
+                o = t.get("object") or {}
+                far.append(f"{(o.get('device') or {}).get('name')}:{o.get('name')}")
+            orphan_cables.append({"cable_id": cab["id"], "label": cab.get("label"),
+                                  "status": cab["status"]["value"],
+                                  "a_count": len(a), "b_count": len(b),
+                                  "still_attached_to": far})
+    findings["D18"] = {
+        "description": "Half-terminated (orphaned) cable -- one side empty",
+        "found": orphan_cables, "count": len(orphan_cables),
+        "note": ("side effect of deleting a device: the CableTermination goes, "
+                 "the Cable remains, so the far-end port still reports cabled"),
+    }
+
     # D17 -- decommissioned circuit still terminated
     stale = []
     for ci in s.get("circuits/circuits", tenant_id=tid):
