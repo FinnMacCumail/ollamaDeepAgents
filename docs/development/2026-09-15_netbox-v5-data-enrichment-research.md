@@ -41,7 +41,8 @@ counted rows in the published `netbox-demo-v4.3.sql`; its counts match the live 
   ADVANCED candidates vs the 30–50 target) are met. The binding condition: **tiers must cross both data
   islands**, or the tenant name becomes a proxy for difficulty and the routing benchmark can be gamed.
 - **Four prerequisites before any write:**
-  1. Repair the corrupted job-queue Valkey (the worker is down; `/api/status/` returns 500).
+  1. ✅ **Done (2026-09-16):** repaired the corrupted job-queue Valkey; the worker is running and
+     `/api/status/` returns 200 again.
   2. Set `CHANGELOG_RETENTION=0` (the default 90 days would silently delete seeded history).
   3. Take a baseline snapshot of today's data.
   4. ✅ **Done (2026-09-16):** the agent now uses a dedicated read-only token (`write_enabled=false`,
@@ -98,6 +99,11 @@ counted rows in the published `netbox-demo-v4.3.sql`; its counts match the live 
   - `netbox-worker` then fails: *"Error -3 connecting to redis:6379"*.
   - Net effect: `/api/status/` returns **HTTP 500**, and background jobs and Custom Scripts can't run.
   - The REST API and GraphQL still work (they use `redis-cache`, which is healthy).
+  - **✅ Resolved 2026-09-16.** `valkey-check-aof --fix` truncated **235 corrupt bytes** from the tail of the
+    21 MB `appendonly.aof.47.incr.aof` (`ok_up_to=21017974`) → *"All AOF files and manifest are valid"*. The
+    original directory is backed up in-volume as `appendonlydir.bak-20260916`. `redis` and `netbox-worker`
+    both restarted **healthy** with `restarts=0`; the AOF now loads cleanly; the worker drained its stale
+    backlog (jobs completing OK); `/api/status/` returns **200** with `rq-workers-running: 1`.
 - **Change-log retention.** `CHANGELOG_RETENTION` is unset, so NetBox's **90-day default** applies, and the
   `netbox-housekeeping` container (running) prunes daily.
 - **Tokens.** Both API tokens are `write_enabled=True`. The agent's token can list every token, so it
@@ -395,7 +401,11 @@ Device types come from `netbox-community/devicetype-library` via `Device-Type-Li
    at the **credential** as well as the tool layer.
    - *Residual:* the permission covers all object types, so the agent can still *view* `users.token`
      (keys are masked). Tightening it to exclude `users.*` is an optional next step.
-5. **Repairing the queue Valkey AOF** involves modifying a container volume. Approve before running.
+5. ~~**Repairing the queue Valkey AOF**~~ — ✅ **DONE (2026-09-16).** Backed up `appendonlydir` in-volume,
+   ran `valkey-check-aof --fix` (truncated 235 corrupt trailing bytes), restarted `redis` + `netbox-worker`.
+   Both **healthy**, `restarts=0`, worker processing jobs, `/api/status/` **200** with one RQ worker running.
+   Background jobs and Custom Scripts are available again — which also makes the Custom Script seeding option
+   (§6) viable, not just the REST path.
 
 ## Sources
 
