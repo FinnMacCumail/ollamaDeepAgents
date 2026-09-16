@@ -123,6 +123,12 @@ instance. (Anchor `<X>` placeholders to be filled with verified objects at build
 
 ## Part 4 — Data-enrichment prerequisite (gating for the advanced tier)
 
+> **Detailed in `2026-09-15_netbox-v5-data-enrichment-research.md`.** A live audit refines the
+> recommendation below: enrich **additively** (a new, fully-modelled tenant in unused address space with a
+> planted-defect answer key) rather than modifying the demo objects. Mutating Dunder-Mifflin/NC State would
+> invalidate 5 of the 6 v4 reference answers. The research also flags prerequisites: a queue Valkey repair,
+> `CHANGELOG_RETENTION=0`, a baseline snapshot, and a read-only agent token.
+
 The NetBox **demo dataset** is thin: ~39–72 devices, **essentially no device-level IP assignments**, little
 cable topology. Several ADVANCED archetypes (cable trace #17, IP-utilization #14, "no primary IP" #13,
 "interfaces without IPs" #21) have **no rich, gradable answers** on it today. So *"test against a larger

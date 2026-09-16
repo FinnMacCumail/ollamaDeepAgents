@@ -13,6 +13,17 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-09-15: NetBox Data Enrichment for v5 — Research](2026-09-15_netbox-v5-data-enrichment-research.md)
+**Research (live audit + 2 online threads; no data changed):** what today's NetBox data can support for v5, and what must be enriched, how, and safely.
+**Key points:**
+- **Unmodified v4.3 demo dump.** Rich inventory, but the relationships advanced queries need are empty: **0/72 devices with a primary IP, 0/180 IPs on interfaces, 62/69 active prefixes empty, 0 VLAN assignments, 0/180 VMs with resources, 0 change-log rows, 100% `active`**.
+- **Archetype score:** ADVANCED tier only **3/10 answerable** (5 degenerate, 2 impossible). SIMPLE/MEDIUM are mostly fine.
+- **Strategy: additive new tenant** ("Halvorsen Logistics": ~6 sites / ~74 devices / ~200 IPs / ~250 cables / 14 circuits / 30 VMs) in 10.60.0.0/16, with a **17-item planted-defect answer key**. Keeps v4 valid; avoid VID 100 and patch one global "180 IPs" sentence in the v4 reference.
+- **Toolchain:** idempotent **pynetbox 7.5.0** REST seed (the only reproducible path that writes the change log); `trace_paths` + `reindex`; pin to a **`pg_dump -Fc` snapshot**; gold answers computed by script with a read-only token.
+- **Prerequisites found:** job-queue Valkey AOF corrupt (worker down, `/api/status/` returns 500); `CHANGELOG_RETENTION` unset (90-day pruning); **agent token is a write-enabled superuser** (should be view-only + `write_enabled=false`); a demo reload wipes tokens.
+- **4.3 gotchas:** no API backdating; `changelog_message` is 4.4+; containers count only same-VRF children; rack utilization counts reservations.
+- **Does the additive tenant satisfy v5? (§5.1)** Yes, conditionally — coverage and volume are met (~45–60 ADVANCED candidates vs a 30–50 target). Binding condition: **tiers must cross both data islands** (some SIMPLE questions on HVL, some MEDIUM/ADVANCED on demo data), or the tenant name becomes a proxy for difficulty and routing can be gamed. Plus: cap near-duplicates, include the P3 domains for full coverage, scope audits to the tenant.
+
 ### [2026-09-15: netbox-benchmark-v5 Dataset Expansion Design](2026-09-15_netbox-benchmark-v5-expansion-design.md)
 **Design (spec, not yet built):** how far to expand the eval dataset (currently 6 examples) and on what basis — for trustworthy A/B numbers AND to serve the upcoming model-handoff routing (which needs difficulty-graded examples).
 **Key points:**
@@ -136,6 +147,7 @@ Original feature specification and architecture planning:
 | 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
 | 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
+| 2026-09-15 | NetBox data enrichment for v5 — research | [2026-09-15_netbox-v5-data-enrichment-research.md](2026-09-15_netbox-v5-data-enrichment-research.md) |
 | 2026-09-15 | netbox-benchmark-v5 dataset expansion design | [2026-09-15_netbox-benchmark-v5-expansion-design.md](2026-09-15_netbox-benchmark-v5-expansion-design.md) |
 | 2026-08-11 | DeepAgents 0.6.10 → 0.7.5 upgrade | [2026-08-11_deepagents-0.7.5-upgrade.md](2026-08-11_deepagents-0.7.5-upgrade.md) |
 | 2026-06-14 | DeepAgents 0.5.6 → 0.6.10 upgrade | [2026-06-14_deepagents-0.6-upgrade.md](2026-06-14_deepagents-0.6-upgrade.md) |
