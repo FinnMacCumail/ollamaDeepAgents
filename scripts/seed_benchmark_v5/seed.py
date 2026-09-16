@@ -1043,11 +1043,16 @@ def layer_cabling(s: NetBoxSeeder, state: dict) -> None:
                        ("sea-dc1-leaf02", "sea-dc1-core02")]:
         cable(IF, iface(leaf, "et-0/0/48"), IF, iface(core, "et-0/0/0"),
               ctype=C.CABLE_TYPE_FIBER, label=f"{leaf} uplink to {core}")
-    # copper panel used the way copper panels ARE used: host patching, where
-    # each front port has its own 1-position rear port.
+    # Copper panel used the way copper panels ARE used: per-port patching.
+    # NB: do NOT patch to the hosts' eno2 -- that NIC is already cabled to
+    # leaf02 above, so the cable would be silently skipped and pp02 would end
+    # up with no cabling at all. Patch to spare leaf access ports instead.
+    # The REAR ports stay uncabled on purpose: that is the documented
+    # legitimate gap "user patch paths end at a rear port" (wall outlets are
+    # not modelled), and it should NOT be reported as a fault.
     for n_ in (1, 2):
         cable(FP, port("dcim/front-ports", "sea-dc1-pp02", f"Port {n_}"),
-              IF, iface(f"sea-dc1-esx0{n_}", "eno2"),
+              IF, iface("sea-dc1-leaf01", f"xe-0/0/{9 + n_}"),
               ctype=C.CABLE_TYPE_COPPER, label=f"pp02 Port {n_} patch")
 
     # -- DC: core <-> core, core -> firewall -> router ----------------------
@@ -1136,6 +1141,25 @@ def layer_cabling(s: NetBoxSeeder, state: dict) -> None:
           port("dcim/front-ports", "hq-pp03", "Port 4"),
           ctype=C.CABLE_TYPE_FIBER, label="hq-acc04 uplink (path breaks at pp01)")
 
+    # -- branch / HQ patch panels: user patching -----------------------------
+    # Six of nine panels were left entirely uncabled, which reads as unfinished
+    # seeding rather than deliberate modelling, and left every branch with a
+    # panel that connects nothing. Patch a handful of access ports per site.
+    # REAR ports stay uncabled ON PURPOSE: that is the documented legitimate
+    # gap ("user patch paths end at a rear port" -- wall outlets are not
+    # modelled) and must NOT be reported as a fault.
+    for sw, panel in [("tac-br01-sw01", "tac-br01-pp01"),
+                      ("por-br02-sw01", "por-br02-pp01"),
+                      ("spo-br03-sw01", "spo-br03-pp01"),
+                      ("hq-acc01", "hq-pp02")]:
+        for n_ in range(1, 5):
+            cable(IF, iface(sw, f"GigabitEthernet1/0/{n_}"),
+                  FP, port("dcim/front-ports", panel, f"Port {n_}"),
+                  ctype=C.CABLE_TYPE_COPPER, label=f"{sw} port {n_} patch")
+
+    # sea-dc1-pp03 and sea-dc1-pp01 are deliberately left as installed SPARES
+    # (DC1-R03 / DC1-R01) -- one unused panel per site is realistic; six was not.
+
     # -- branches: router <-> switch, AP -> switch, WAN -> circuit ----------
     for pfx in ["tac-br01", "por-br02", "spo-br03"]:
         cable(IF, iface(f"{pfx}-rtr01", "GigabitEthernet0/1/0"), IF,
@@ -1164,6 +1188,13 @@ def layer_cabling(s: NetBoxSeeder, state: dict) -> None:
               ctype=C.CABLE_TYPE_FIBER, label=f"WAN {cid}")
 
     state["cables_created"] = made
+    # Surface the misses. Instrumentation that stays silent is how the esx05
+    # power gap and the pp02 patch conflict both went unnoticed.
+    if skipped:
+        print(f"    WARNING: {len(skipped)} cable(s) skipped:")
+        for line in skipped:
+            print(f"      - {line}")
+    state["cables_skipped"] = skipped
 
 
 LAYERS = {
