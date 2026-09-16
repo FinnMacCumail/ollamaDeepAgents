@@ -48,7 +48,7 @@ LAYER_ORDER = [
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
 IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
-               "ipfill"}
+               "ipfill", "circuits", "power", "virt"}
 
 
 # --------------------------------------------------------------------------
@@ -709,6 +709,239 @@ def layer_ipfill(s: NetBoxSeeder, state: dict) -> None:
             s.patch("ipam/prefixes", pool[0]["id"], {"mark_utilized": True})
 
 
+# --------------------------------------------------------------------------
+# layer: circuits
+# --------------------------------------------------------------------------
+def layer_circuits(s: NetBoxSeeder, state: dict) -> None:
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tenant["id"])}
+    providers = {p["slug"]: p for p in s.get("circuits/providers")}
+    ctypes = {t["slug"]: t for t in s.get("circuits/circuit-types")}
+
+    # MPLS circuits terminate Z-side on the provider's network (as the demo
+    # data does); internet circuits have an A side only -- a legitimate gap.
+    # NB: provider-networks have NO `slug` field in 4.3 (verified via OPTIONS:
+    # provider/name/service_id/description only). Matching on a non-existent
+    # filter would silently return every object, so match on name + provider.
+    pnet = s.get_or_create(
+        "circuits/provider-networks",
+        match={"name": "Evergreen MPLS Core",
+               "provider_id": providers["evergreen-networks"]["id"]},
+        payload=s.tagged({
+            "provider": _ref(providers["evergreen-networks"]),
+            "name": "Evergreen MPLS Core",
+        }),
+    )
+
+    for cid, prov, ctype, site_slug, status, rate, _cable_to in B.CIRCUITS:
+        payload = {
+            "cid": cid,
+            "provider": _ref(providers[prov]),
+            "type": _ref(ctypes[ctype]),
+            "status": status,
+            "tenant": _ref(tenant),
+        }
+        if rate:
+            payload["commit_rate"] = rate
+        circuit = s.get_or_create(
+            "circuits/circuits",
+            match={"cid": cid},
+            payload=s.tagged(payload),
+        )
+        # A side: always the site
+        s.get_or_create(
+            "circuits/circuit-terminations",
+            match={"circuit_id": circuit["id"], "term_side": "A"},
+            payload={
+                "circuit": _ref(circuit), "term_side": "A",
+                "termination_type": "dcim.site",
+                "termination_id": sites[site_slug]["id"],
+            },
+        )
+        # Z side: only MPLS, onto the provider network
+        if ctype == "mpls":
+            s.get_or_create(
+                "circuits/circuit-terminations",
+                match={"circuit_id": circuit["id"], "term_side": "Z"},
+                payload={
+                    "circuit": _ref(circuit), "term_side": "Z",
+                    "termination_type": "circuits.providernetwork",
+                    "termination_id": pnet["id"],
+                },
+            )
+
+
+# --------------------------------------------------------------------------
+# layer: power
+# --------------------------------------------------------------------------
+def layer_power(s: NetBoxSeeder, state: dict) -> None:
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tenant["id"])}
+    racks = {x["name"]: x for x in s.get("dcim/racks", tenant_id=tenant["id"])}
+
+    panels = {}
+    for spec in B.POWER_PANELS:
+        site = sites[spec["site"]]
+        locs = s.get("dcim/locations", site_id=site["id"], name=spec["location"])
+        payload = {"site": _ref(site), "name": spec["name"]}
+        if locs:
+            payload["location"] = _ref(locs[0])
+        panels[spec["name"]] = s.get_or_create(
+            "dcim/power-panels",
+            match={"name": spec["name"], "site_id": site["id"]},
+            payload=s.tagged(payload),
+        )
+
+    for name, panel, rack, ftype, status, voltage, amperage in B.POWER_FEEDS:
+        s.get_or_create(
+            "dcim/power-feeds",
+            match={"name": name, "power_panel_id": panels[panel]["id"]},
+            payload=s.tagged({
+                "power_panel": _ref(panels[panel]),
+                "rack": _ref(racks[rack]),
+                "name": name, "status": status, "type": ftype,
+                "supply": "ac", "phase": "single-phase",
+                "voltage": voltage, "amperage": amperage,
+                "max_utilization": 80,
+            }),
+        )
+    state["power_panels"] = panels
+
+
+# --------------------------------------------------------------------------
+# layer: virt
+# --------------------------------------------------------------------------
+# VMs deliberately left without a primary IP.
+VM_NO_PRIMARY = {"hvl-app08"}          # D16: has an IP, but not set as primary
+VM_NO_IP = {"hvl-test01", "hvl-backup01"}
+
+
+def layer_virt(s: NetBoxSeeder, state: dict) -> None:
+    import ipaddress as _ip
+
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tenant["id"])}
+    platforms = {x["slug"]: x for x in s.get("dcim/platforms")}
+    corp = s.get("ipam/vrfs", name=B.VRF_CORP["name"])
+    if not corp:
+        raise SeedError("HVL-CORP VRF missing -- run 'ipam' first")
+    corp = corp[0]
+    devices = {}
+    for site in sites.values():
+        for d in s.get("dcim/devices", site_id=site["id"]):
+            devices[d["name"]] = d
+
+    groups = {}
+    for spec in B.CLUSTER_GROUPS:
+        groups[spec["slug"]] = s.get_or_create(
+            "virtualization/cluster-groups",
+            match={"slug": spec["slug"]}, payload=dict(spec),
+        )
+
+    clusters = {}
+    for spec in B.CLUSTERS:
+        site = sites[spec["site"]]
+        clusters[spec["name"]] = s.get_or_create(
+            "virtualization/clusters",
+            match={"name": spec["name"]},
+            payload=s.tagged({
+                "name": spec["name"],
+                "type": {"id": C.CLUSTER_TYPES[spec["type"]]},
+                "group": _ref(groups[spec["group"]]),
+                "status": spec["status"],
+                "tenant": _ref(tenant),
+                "scope_type": "dcim.site", "scope_id": site["id"],
+            }),
+        )
+
+    # NetBox REJECTS `VirtualMachine.device` unless that device is itself a
+    # member of the same cluster:
+    #   "The selected device (sea-dc1-esx01) is not assigned to this cluster"
+    # So the hypervisor hosts must join their cluster BEFORE any VM pins to
+    # them. (A dry run cannot catch this -- it creates nothing, so the
+    # cross-object constraint is never evaluated.)
+    host_cluster: dict[str, str] = {}
+    for _n, cl, host, *_rest in B.VMS:
+        if host:
+            host_cluster[host] = cl
+    for host_name, cl_name in sorted(host_cluster.items()):
+        dev = devices.get(host_name)
+        if not dev:
+            continue
+        current = (dev.get("cluster") or {}).get("id")
+        if current == clusters[cl_name]["id"]:
+            s._tally(s.reused, "dcim/devices (already in cluster)")
+            continue
+        s.patch("dcim/devices", dev["id"], {"cluster": _ref(clusters[cl_name])})
+
+    # VM addresses come from the DC server subnet, high offsets so they cannot
+    # collide with the filler hosts created by the ipfill layer.
+    vm_net = _ip.ip_network("10.60.2.0/24")
+    offset = 100
+
+    for name, cl, host, vcpus, memory, disk, status, platform in B.VMS:
+        payload = {
+            "name": name, "status": status,
+            "cluster": _ref(clusters[cl]),
+            "tenant": _ref(tenant),
+            "platform": _ref(platforms[platform]),
+            "vcpus": vcpus, "memory": memory,
+        }
+        if host and host in devices:
+            payload["device"] = _ref(devices[host])
+        # NetBox only allows `disk` to be set directly on VMs that do NOT
+        # define discrete VirtualDisks -- so db VMs get disks instead.
+        is_db = name.startswith("hvl-db")
+        if not is_db:
+            payload["disk"] = disk
+        vm = s.get_or_create(
+            "virtualization/virtual-machines",
+            match={"name": name}, payload=s.tagged(payload),
+        )
+
+        if is_db:
+            for n_disk in (1, 2):
+                s.get_or_create(
+                    "virtualization/virtual-disks",
+                    match={"virtual_machine_id": vm["id"], "name": f"disk{n_disk}"},
+                    payload={"virtual_machine": _ref(vm), "name": f"disk{n_disk}",
+                             "size": disk // 2},
+                )
+
+        if name in VM_NO_IP:
+            continue
+
+        iface = s.get_or_create(
+            "virtualization/interfaces",
+            match={"virtual_machine_id": vm["id"], "name": "eth0"},
+            payload={"virtual_machine": _ref(vm), "name": "eth0", "enabled": True},
+        )
+        addr = f"{vm_net.network_address + offset}/{vm_net.prefixlen}"
+        offset += 1
+        ip = s.get_or_create(
+            "ipam/ip-addresses",
+            match={"address": addr.split("/")[0], "vrf_id": corp["id"]},
+            payload=s.tagged({
+                "address": addr, "status": "active", "vrf": _ref(corp),
+                "tenant": _ref(tenant), "dns_name": f"{name}.hvl.example",
+                "assigned_object_type": "virtualization.vminterface",
+                "assigned_object_id": iface["id"],
+            }),
+        )
+        if name not in VM_NO_PRIMARY and not vm.get("primary_ip4"):
+            s.patch("virtualization/virtual-machines", vm["id"],
+                    {"primary_ip4": _ref(ip)})
+
+
 LAYERS = {
     "lookups": layer_lookups,
     "org": layer_org,
@@ -717,6 +950,9 @@ LAYERS = {
     "ipam": layer_ipam,
     "ipaddrs": layer_ipaddrs,
     "ipfill": layer_ipfill,
+    "circuits": layer_circuits,
+    "power": layer_power,
+    "virt": layer_virt,
 }
 
 
