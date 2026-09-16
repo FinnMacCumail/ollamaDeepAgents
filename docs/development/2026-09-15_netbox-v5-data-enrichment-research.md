@@ -44,8 +44,8 @@ counted rows in the published `netbox-demo-v4.3.sql`; its counts match the live 
   1. Repair the corrupted job-queue Valkey (the worker is down; `/api/status/` returns 500).
   2. Set `CHANGELOG_RETENTION=0` (the default 90 days would silently delete seeded history).
   3. Take a baseline snapshot of today's data.
-  4. Split tokens: give the agent a **read-only** token. Today it uses a write-enabled superuser token,
-     which contradicts the project's READ-only rule at the credential level.
+  4. ✅ **Done (2026-09-16):** the agent now uses a dedicated read-only token (`write_enabled=false`,
+     view-only permissions). A seeder token with write access is still to be provisioned at seed time.
 
 ---
 
@@ -103,7 +103,8 @@ counted rows in the published `netbox-demo-v4.3.sql`; its counts match the live 
 - **Tokens.** Both API tokens are `write_enabled=True`. The agent's token can list every token, so it
   belongs to a **superuser**.
   - Read-only is enforced only at the tool layer (MCP read-only tools + the GraphQL AST check), not at the
-    credential.
+    credential. **✅ Resolved 2026-09-16** — the agent now uses a dedicated non-superuser `llm-agent` token
+    with `write_enabled=false` and view-only permissions (see §9.4).
   - Separately, the demo dump contains **no `users_token` rows**, so reloading the demo **wipes the agent's
     token**.
 
@@ -386,7 +387,14 @@ Device types come from `netbox-community/devicetype-library` via `Device-Type-Li
    - (b) do all activity in one sitting and phrase questions by absolute window/order (fast, recommended),
      or
    - (c) backdate via `nbshell` (fast, but falsified timestamps).
-4. **Fix the agent token now**, independent of enrichment. It is currently a write-enabled superuser token.
+4. ~~**Fix the agent token now**~~ — ✅ **DONE (2026-09-16).** Created a non-superuser `llm-agent` user, an
+   ObjectPermission granting **`view` on all 156 object types**, and a token with **`write_enabled=false`**;
+   `.env` now points at it. Verified: REST read 200 (72 devices), GraphQL tool read + schema introspection OK,
+   MCP connects (4 tools) and `netbox_get_objects` returns data, and `POST /api/dcim/sites/` → **HTTP 403**.
+   The two pre-existing superuser tokens were left untouched as the rollback path. Read-only is now enforced
+   at the **credential** as well as the tool layer.
+   - *Residual:* the permission covers all object types, so the agent can still *view* `users.token`
+     (keys are masked). Tightening it to exclude `users.*` is an optional next step.
 5. **Repairing the queue Valkey AOF** involves modifying a container volume. Approve before running.
 
 ## Sources

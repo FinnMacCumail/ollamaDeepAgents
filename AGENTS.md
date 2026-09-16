@@ -166,6 +166,21 @@ the constructor; it would clobber explicit params.
 To run a model whose prefix isn't allow-listed: add the prefix to `allowed_prefixes` in
 `config.py`, or set `DEBUG=true` to bypass validation.
 
+**NetBox API token — read-only by credential (since 2026-09-16).** `NETBOX_TOKEN` in `.env` is the
+`llm-agent` token: a **non-superuser** user, an ObjectPermission granting **`view` on all 156 object
+types**, and **`write_enabled=false`**. NetBox itself rejects unsafe methods on this token
+(`POST /api/dcim/sites/` → **403**), so read-only is now enforced at the **credential** as well as at the
+tool layer (MCP read-only tools + the `graphql-core` AST check in `netbox_graphql.py`). Verified end to
+end: REST reads, both GraphQL tools, and all 4 MCP tools return data; writes are refused.
+
+- **Do not swap this back to a superuser token.** The two pre-existing superuser tokens (users `admin`,
+  `ola`) are untouched, remain available for admin/seeding work, and are the rollback path.
+- **Gotcha:** NetBox 4.3 never returns a token's `key` through the API — the field is absent from the
+  serializer, *including in the creation response*. A token's value therefore **cannot be read back**. When
+  you need to know it, POST the token with an **explicit `key`** (40 hex chars) instead of letting NetBox
+  generate one.
+- Reloading the demo SQL dump wipes all users and tokens, so token creation must be part of any re-seed.
+
 ---
 
 ## 6. Evaluation harness (`tests/eval/`)
