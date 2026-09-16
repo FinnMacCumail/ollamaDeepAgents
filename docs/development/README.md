@@ -13,6 +13,16 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-09-16: v5 Question Authoring Plan](2026-09-16_v5-question-authoring-plan.md)
+**Plan (authoring not started):** how to author the ~90 v5 questions so they score *validly* under the four existing evaluators, and so difficulty measures reasoning rather than topic.
+**Key points:**
+- **Found a bug in the existing v4 set:** 4 of 6 examples have `expected_entities` their own `reference_answer` cannot match (site-comparison self-scores **0.500**), so a perfect answer cannot score 1.0 and some quoted v4 coverage numbers are depressed by an authoring bug.
+- **Verified harness semantics:** `entity_coverage` strips punctuation but keeps spaces (`0%`→`0`, matching any zero; `10.112.129.0/24`→`10112129024`); `correctness_judge` scores **contradiction, not completeness**; `tool_calls` is a raw count.
+- **Authoring rules:** pin scope in the question (our live cases differ 3-vs-4 and 68-vs-69 by scope); reference template = ANSWER / ACCEPTABLE VARIANTS / CONTRADICTIONS; entities 1–5, never appearing in the question, no bare integers or percentages; absence items twinned with positives; no relative time phrasing.
+- **Composition:** 90 = 30 per tier × (count 7 / list 7 / value 6 / boolean 4 / explanation 3 / absence 3). Difficulty defined by *mechanism* (hops, filters, aggregation), and every tenant/domain must appear in all three tiers or the routing evaluation measures topic.
+- **Two mandatory harness fixes first:** `_fetch_feedback` returns at 3 evaluators but there are 4 (can drop `correctness`); `ensure_dataset_*` is create-only so editing examples silently has no effect.
+- **Statistics:** 30/tier → ±9pp SE, so only ~15–20pp effects are detectable; use paired analysis for routing comparisons.
+
 ### [2026-09-15: NetBox Data Enrichment for v5 — Research](2026-09-15_netbox-v5-data-enrichment-research.md)
 **Research (live audit + 2 online threads; no data changed):** what today's NetBox data can support for v5, and what must be enriched, how, and safely.
 **Key points:**

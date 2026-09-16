@@ -43,6 +43,9 @@ LAYER_ORDER = [
     # terminations, which do not exist until that layer has run.
     "cabling",       # interface<->interface, patch-panel trunks, console, power
     "virt",          # cluster groups, clusters, VMs, virtual disks
+    "assets",        # serials + asset tags on HVL devices, incl. defect D15
+    # defects MUST follow assets: D15 (the duplicate serial pair) does not
+    # exist until serials have been seeded.
     "defects",       # the planted-defect answer key
     "journal",       # journal entries + the change-history activity phase
 ]
@@ -50,8 +53,8 @@ LAYER_ORDER = [
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
 IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
-               "ipfill", "circuits", "power", "virt", "cabling", "defects",
-               "journal"}
+               "ipfill", "circuits", "power", "virt", "cabling", "assets",
+               "defects", "journal"}
 
 
 # --------------------------------------------------------------------------
@@ -1480,6 +1483,38 @@ def layer_journal(s: NetBoxSeeder, state: dict) -> None:
         s._tally(s.reused, "dcim/devices (AP already removed)")
 
 
+# --------------------------------------------------------------------------
+# layer: assets  (serials + asset tags, and defect D15)
+# --------------------------------------------------------------------------
+# Measured 2026-09-16: 0 of 141 devices instance-wide had a serial or an asset
+# tag, so the v5 archetype "serial + asset tag of device X" had no data behind
+# it and blueprint defect D15 (duplicate serial pair) was never real.
+# Demo devices are NOT touched -- only HVL devices get assets.
+def layer_assets(s: NetBoxSeeder, state: dict) -> None:
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    sites = s.get("dcim/sites", tenant_id=tenant[0]["id"])
+
+    devices: list[dict] = []
+    for site in sites:
+        devices.extend(s.get("dcim/devices", site_id=site["id"]))
+    devices.sort(key=lambda d: d["name"])
+
+    # Deterministic, readable, and obviously synthetic so nobody mistakes these
+    # for real hardware identifiers.
+    DUP_SERIAL = "HVL-DUP-0001"
+    dup_pair = {"hq-acc01", "hq-acc03"}          # defect D15
+
+    for idx, dev in enumerate(devices, start=1):
+        serial = DUP_SERIAL if dev["name"] in dup_pair else f"HVL-SN-{idx:05d}"
+        asset = f"HVL-AT-{idx:05d}"
+        if dev.get("serial") == serial and dev.get("asset_tag") == asset:
+            s._tally(s.reused, "dcim/devices (assets set)")
+            continue
+        s.patch("dcim/devices", dev["id"], {"serial": serial, "asset_tag": asset})
+
+
 LAYERS = {
     "lookups": layer_lookups,
     "org": layer_org,
@@ -1492,6 +1527,7 @@ LAYERS = {
     "power": layer_power,
     "virt": layer_virt,
     "cabling": layer_cabling,
+    "assets": layer_assets,
     "defects": layer_defects,
     "journal": layer_journal,
 }
