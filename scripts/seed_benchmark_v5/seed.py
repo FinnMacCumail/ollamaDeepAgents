@@ -37,9 +37,11 @@ LAYER_ORDER = [
     "ipam",          # VRFs, VLAN groups, VLANs, prefixes
     "ipaddrs",       # IPs on interfaces, primary IPs, defects D1/D2/D3
     "ipfill",        # filler host IPs to reach the intended utilization spread
-    "cabling",       # interface<->interface, patch-panel trunks, console, power
-    "power",         # panels, feeds, PDU chains
+    "power",         # panels, feeds
     "circuits",      # providers' circuits + terminations
+    # cabling MUST follow circuits: the WAN cables terminate on circuit
+    # terminations, which do not exist until that layer has run.
+    "cabling",       # interface<->interface, patch-panel trunks, console, power
     "virt",          # cluster groups, clusters, VMs, virtual disks
     "defects",       # the planted-defect answer key
     "journal",       # journal entries + the change-history activity phase
@@ -48,7 +50,7 @@ LAYER_ORDER = [
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
 IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
-               "ipfill", "circuits", "power", "virt"}
+               "ipfill", "circuits", "power", "virt", "cabling"}
 
 
 # --------------------------------------------------------------------------
@@ -898,8 +900,11 @@ def layer_virt(s: NetBoxSeeder, state: dict) -> None:
         }
         if host and host in devices:
             payload["device"] = _ref(devices[host])
-        # NetBox only allows `disk` to be set directly on VMs that do NOT
-        # define discrete VirtualDisks -- so db VMs get disks instead.
+        # `disk` is DERIVED from the aggregate of any VirtualDisks, and NetBox
+        # rejects a mismatch outright (verified 2026-09-16):
+        #   "The specified disk size (999999) must match the aggregate size of
+        #    assigned virtual disks (204800)."
+        # So db VMs must NOT send `disk` -- their VirtualDisks define it.
         is_db = name.startswith("hvl-db")
         if not is_db:
             payload["disk"] = disk
@@ -942,6 +947,225 @@ def layer_virt(s: NetBoxSeeder, state: dict) -> None:
                     {"primary_ip4": _ref(ip)})
 
 
+# --------------------------------------------------------------------------
+# layer: cabling
+# --------------------------------------------------------------------------
+def _term(object_type: str, obj_id: int) -> list[dict]:
+    return [{"object_type": object_type, "object_id": obj_id}]
+
+
+def layer_cabling(s: NetBoxSeeder, state: dict) -> None:
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tenant["id"])}
+
+    devices: dict[str, dict] = {}
+    for site in sites.values():
+        for d in s.get("dcim/devices", site_id=site["id"]):
+            devices[d["name"]] = d
+
+    def iface(dev_name: str, name: str) -> dict | None:
+        dev = devices.get(dev_name)
+        if not dev:
+            return None
+        found = s.get("dcim/interfaces", device_id=dev["id"], name=name)
+        return found[0] if found else None
+
+    def port(ep: str, dev_name: str, name: str) -> dict | None:
+        dev = devices.get(dev_name)
+        if not dev:
+            return None
+        found = s.get(ep, device_id=dev["id"], name=name)
+        return found[0] if found else None
+
+    made = 0
+
+    skipped: list[str] = []
+
+    def cable(a_type: str, a_obj, b_type: str, b_obj, *,
+              ctype: str, status: str = "connected", label: str = "") -> None:
+        nonlocal made
+        if not a_obj or not b_obj:
+            # A silent skip here is how D10 was created as "0 PSUs connected"
+            # instead of 1, and why a missing path went unnoticed. Record it.
+            skipped.append(f"{label or '(unlabelled)'}: "
+                           f"a={'ok' if a_obj else 'MISSING'} "
+                           f"b={'ok' if b_obj else 'MISSING'}")
+            return
+        # a cabled termination already has `cable` set -- cheapest idempotency
+        if a_obj.get("cable") or b_obj.get("cable"):
+            s._tally(s.reused, "dcim/cables")
+            return
+        s.create("dcim/cables", s.tagged({
+            "a_terminations": _term(a_type, a_obj["id"]),
+            "b_terminations": _term(b_type, b_obj["id"]),
+            "type": ctype, "status": status, "tenant": _ref(tenant),
+            "label": label,
+        }))
+        made += 1
+
+    IF = "dcim.interface"
+    FP, RP = "dcim.frontport", "dcim.rearport"
+    CP, CSP = "dcim.consoleport", "dcim.consoleserverport"
+    PP, PO = "dcim.powerport", "dcim.poweroutlet"
+
+    # -- DC: hosts -> leaf pair (25G), iDRAC -> management switch ------------
+    for i in range(1, 6):
+        host = f"sea-dc1-esx{i:02d}"
+        cable(IF, iface(host, "eno1"), IF, iface("sea-dc1-leaf01", f"xe-0/0/{i}"),
+              ctype=C.CABLE_TYPE_FIBER, label=f"{host}:eno1")
+        cable(IF, iface(host, "eno2"), IF, iface("sea-dc1-leaf02", f"xe-0/0/{i}"),
+              ctype=C.CABLE_TYPE_FIBER, label=f"{host}:eno2")
+        cable(IF, iface(host, "idrac"), IF,
+              iface("sea-dc1-oob-sw01", f"GigabitEthernet1/0/{i}"),
+              ctype=C.CABLE_TYPE_COPPER, label=f"{host}:idrac")
+    for i in range(6, 9):
+        host = f"sea-dc1-esx{i:02d}"
+        cable(IF, iface(host, "eno1"), IF, iface("sea-dc1-leaf03", f"xe-0/0/{i}"),
+              ctype=C.CABLE_TYPE_FIBER, label=f"{host}:eno1")
+
+    # -- DC: leaf uplinks THROUGH a panel pair (multi-hop trace) ------------
+    # A rear-to-rear trunk carries POSITIONS. The HQ pair works because both
+    # ends are 48-Pair Fiber Panels with a single 48-position "Rear Splice":
+    # front Port N maps to position N at both ends, so every port crosses.
+    #
+    # sea-dc1-pp02/pp03 are 48-PORT COPPER panels: 48 discrete rear ports of
+    # ONE position each. A copper rear -> fibre splice trunk therefore carries
+    # a single position, so leaf01 stalled at the far splice and leaf02 had no
+    # rear cable at all. Copper panels are used for per-port patching, not as
+    # a trunked pair -- so the DC uplinks are cabled DIRECTLY leaf -> core and
+    # the multi-hop panel path is modelled at HQ, where the panel types allow
+    # it. (Verified against the demo data's own NCSU path, which is
+    # splice -> circuit -> splice between two fibre panels.)
+    for leaf, core in [("sea-dc1-leaf01", "sea-dc1-core01"),
+                       ("sea-dc1-leaf02", "sea-dc1-core02")]:
+        cable(IF, iface(leaf, "et-0/0/48"), IF, iface(core, "et-0/0/0"),
+              ctype=C.CABLE_TYPE_FIBER, label=f"{leaf} uplink to {core}")
+    # copper panel used the way copper panels ARE used: host patching, where
+    # each front port has its own 1-position rear port.
+    for n_ in (1, 2):
+        cable(FP, port("dcim/front-ports", "sea-dc1-pp02", f"Port {n_}"),
+              IF, iface(f"sea-dc1-esx0{n_}", "eno2"),
+              ctype=C.CABLE_TYPE_COPPER, label=f"pp02 Port {n_} patch")
+
+    # -- DC: core <-> core, core -> firewall -> router ----------------------
+    cable(IF, iface("sea-dc1-core01", "et-0/0/35"), IF,
+          iface("sea-dc1-core02", "et-0/0/35"), ctype=C.CABLE_TYPE_FIBER,
+          label="core peer-link")
+    for core, fw in [("sea-dc1-core01", "sea-dc1-fw01"),
+                     ("sea-dc1-core02", "sea-dc1-fw02")]:
+        cable(IF, iface(core, "et-0/0/1"), IF, iface(fw, "ethernet1/1"),
+              ctype=C.CABLE_TYPE_FIBER, label=f"{core}-{fw}")
+    for fw, rtr in [("sea-dc1-fw01", "sea-dc1-rtr01"),
+                    ("sea-dc1-fw02", "sea-dc1-rtr02")]:
+        cable(IF, iface(fw, "ethernet1/2"), IF, iface(rtr, "GigabitEthernet0/1/0"),
+              ctype=C.CABLE_TYPE_COPPER, label=f"{fw}-{rtr}")
+
+    # -- console: DC devices -> console server ------------------------------
+    # sea-dc1-leaf03's console is deliberately left UNCABLED (defect D9).
+    for n_, dev in enumerate(["sea-dc1-core01", "sea-dc1-core02", "sea-dc1-leaf01",
+                              "sea-dc1-leaf02", "sea-dc1-fw01"], start=1):
+        cable(CP, port("dcim/console-ports", dev, "Console") or
+              port("dcim/console-ports", dev, "con 0"),
+              CSP, port("dcim/console-server-ports", "sea-dc1-con01", f"port{n_:02d}"),
+              ctype=C.CABLE_TYPE_COPPER, label=f"console {dev}")
+
+    # -- power: PDU outlet -> device PSU (dual-fed A/B) ---------------------
+    # sea-dc1-esx05 gets ONE supply only (defect D10).
+    # Each PDU has only 8 outlets, so the A/B pairs must be spread across the
+    # PDUs IN THE DEVICE'S OWN RACK. Sending everything to pdu01/pdu02 (rack
+    # R01) exhausted them at 8/8 and silently dropped esx05 entirely -- which
+    # turned defect D10 ("one supply connected") into "no supplies connected".
+    dc_power = [
+        # (device, PSUs, A-side PDU, B-side PDU)
+        ("sea-dc1-core01", ["PSU0", "PSU1"], "sea-dc1-pdu01", "sea-dc1-pdu02"),
+        ("sea-dc1-core02", ["PSU0", "PSU1"], "sea-dc1-pdu01", "sea-dc1-pdu02"),
+        ("sea-dc1-fw01", ["PSU0", "PSU1"], "sea-dc1-pdu01", "sea-dc1-pdu02"),
+        ("sea-dc1-fw02", ["PSU0", "PSU1"], "sea-dc1-pdu01", "sea-dc1-pdu02"),
+        ("sea-dc1-leaf01", ["PSU0", "PSU1"], "sea-dc1-pdu03", "sea-dc1-pdu04"),
+        ("sea-dc1-leaf02", ["PSU0", "PSU1"], "sea-dc1-pdu03", "sea-dc1-pdu04"),
+        ("sea-dc1-esx01", ["PSU0", "PSU1"], "sea-dc1-pdu03", "sea-dc1-pdu04"),
+        ("sea-dc1-esx02", ["PSU0", "PSU1"], "sea-dc1-pdu03", "sea-dc1-pdu04"),
+        # D10: exactly ONE connected supply, on the PDU in its own rack
+        ("sea-dc1-esx05", ["PSU0"], "sea-dc1-pdu03", "sea-dc1-pdu04"),
+    ]
+    outlet_n: dict[str, int] = {}
+    for dev, psus, pdu_a, pdu_b in dc_power:
+        for idx, psu in enumerate(psus):
+            pdu = pdu_a if idx == 0 else pdu_b
+            slot = outlet_n.get(pdu, 0) + 1
+            if slot > 8:
+                skipped.append(f"{dev} {psu}: {pdu} has no free outlet")
+                continue
+            outlet_n[pdu] = slot
+            cable(PP, port("dcim/power-ports", dev, psu),
+                  PO, port("dcim/power-outlets", pdu, f"Outlet {slot}"),
+                  ctype=C.CABLE_TYPE_POWER, label=f"{dev} {psu}")
+
+    # -- HQ: access -> distribution, one PLANNED cable (defect D7) ----------
+    cable(IF, iface("hq-acc01", "GigabitEthernet1/0/48"), IF,
+          iface("hq-dist01", "xe-0/0/0"), ctype=C.CABLE_TYPE_COPPER,
+          label="hq-acc01 uplink")
+    cable(IF, iface("hq-acc01", "GigabitEthernet1/0/47"), IF,
+          iface("hq-dist02", "xe-0/0/0"), ctype=C.CABLE_TYPE_COPPER,
+          status="planned", label="hq-acc01 second uplink (planned)")
+    cable(IF, iface("hq-dist01", "et-0/0/48"), IF, iface("hq-rtr01", "GigabitEthernet0/1/0"),
+          ctype=C.CABLE_TYPE_COPPER, label="hq-dist01 to router")
+
+    # -- HQ: IDF uplink through panels, deliberately BROKEN for hq-acc04 ----
+    # hq-acc03 completes: acc03 -> pp03 front1 -> rear -> pp01 front3 -> dist01
+    cable(IF, iface("hq-acc03", "GigabitEthernet1/0/48"), FP,
+          port("dcim/front-ports", "hq-pp03", "Port 1"),
+          ctype=C.CABLE_TYPE_FIBER, label="hq-acc03 uplink")
+    cable(RP, port("dcim/rear-ports", "hq-pp03", "Rear Splice"), RP,
+          port("dcim/rear-ports", "hq-pp01", "Rear Splice"),
+          ctype=C.CABLE_TYPE_FIBER, label="HQ IDF trunk")
+    # The onward cable MUST sit on the front port the traffic actually arrives
+    # on. hq-acc03 enters hq-pp03 "Port 1" (position 1), and the splice-to-
+    # splice trunk preserves position, so it emerges on hq-pp01 "Port 1" --
+    # NOT "Port 3". Cabling the wrong port leaves the path dead-ending and
+    # makes the good path indistinguishable from the D6 broken one.
+    cable(FP, port("dcim/front-ports", "hq-pp01", "Port 1"), IF,
+          iface("hq-dist01", "xe-0/0/1"), ctype=C.CABLE_TYPE_FIBER,
+          label="hq-pp01 Port 1 to dist01")
+    # hq-acc04 uplink enters pp03 but pp01 Port 4 is NEVER cabled onward:
+    # the trace dead-ends at a front port (defect D6).
+    cable(IF, iface("hq-acc04", "GigabitEthernet1/0/48"), FP,
+          port("dcim/front-ports", "hq-pp03", "Port 4"),
+          ctype=C.CABLE_TYPE_FIBER, label="hq-acc04 uplink (path breaks at pp01)")
+
+    # -- branches: router <-> switch, AP -> switch, WAN -> circuit ----------
+    for pfx in ["tac-br01", "por-br02", "spo-br03"]:
+        cable(IF, iface(f"{pfx}-rtr01", "GigabitEthernet0/1/0"), IF,
+              iface(f"{pfx}-sw01", "GigabitEthernet1/0/48"),
+              ctype=C.CABLE_TYPE_COPPER, label=f"{pfx} rtr-sw")
+    cable(IF, iface("tac-br01-ap01", "eth0"), IF,
+          iface("tac-br01-sw01", "GigabitEthernet1/0/24"),
+          ctype=C.CABLE_TYPE_COPPER, label="tac-br01-ap01")
+    cable(IF, iface("por-br02-ap01", "eth0"), IF,
+          iface("por-br02-sw01", "GigabitEthernet1/0/24"),
+          ctype=C.CABLE_TYPE_COPPER, label="por-br02-ap01")
+
+    # -- WAN: router interface -> circuit termination (A side) --------------
+    for cid, _prov, _ct, _site, _status, _rate, cable_to in B.CIRCUITS:
+        if not cable_to:
+            continue
+        circuit = s.get("circuits/circuits", cid=cid)
+        if not circuit:
+            continue
+        terms = s.get("circuits/circuit-terminations",
+                      circuit_id=circuit[0]["id"], term_side="A")
+        if not terms:
+            continue
+        cable(IF, iface(cable_to, "GigabitEthernet0/0/0"),
+              "circuits.circuittermination", terms[0],
+              ctype=C.CABLE_TYPE_FIBER, label=f"WAN {cid}")
+
+    state["cables_created"] = made
+
+
 LAYERS = {
     "lookups": layer_lookups,
     "org": layer_org,
@@ -953,6 +1177,7 @@ LAYERS = {
     "circuits": layer_circuits,
     "power": layer_power,
     "virt": layer_virt,
+    "cabling": layer_cabling,
 }
 
 
