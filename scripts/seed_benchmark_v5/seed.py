@@ -50,7 +50,8 @@ LAYER_ORDER = [
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
 IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
-               "ipfill", "circuits", "power", "virt", "cabling", "defects"}
+               "ipfill", "circuits", "power", "virt", "cabling", "defects",
+               "journal"}
 
 
 # --------------------------------------------------------------------------
@@ -1437,10 +1438,17 @@ def layer_journal(s: NetBoxSeeder, state: dict) -> None:
         })
 
     # ---- 3. DELETE: an AP is replaced, leaving a delete in the log --------
+    # This is the ONLY destructive step in the whole seeder. It is deliberate:
+    # `delete` is one of the two actions distinguishable from the bulk-create
+    # floor. Deleting the device CASCADES to its interface, its IP assignment
+    # and its cable -- which is realistic for a replaced access point, but it
+    # is irreversible short of restoring the snapshot.
     doomed = s.get("dcim/devices", name="por-br02-ap01")
     if doomed:
         s.delete("dcim/devices", doomed[0]["id"])
-        s._tally(s.created, "dcim/devices (DELETED por-br02-ap01)")
+        s._tally(s.deleted, "dcim/devices (por-br02-ap01, replaced AP)")
+    else:
+        s._tally(s.reused, "dcim/devices (AP already removed)")
 
 
 LAYERS = {
@@ -1456,6 +1464,7 @@ LAYERS = {
     "virt": layer_virt,
     "cabling": layer_cabling,
     "defects": layer_defects,
+    "journal": layer_journal,
 }
 
 

@@ -42,6 +42,7 @@ class NetBoxSeeder:
         self.created: dict[str, int] = {}
         self.reused: dict[str, int] = {}
         self.patched: dict[str, int] = {}
+        self.deleted: dict[str, int] = {}
         self._fake_id = -1
 
     # -- plumbing ----------------------------------------------------------
@@ -171,6 +172,7 @@ class NetBoxSeeder:
             fmt("created", self.created),
             fmt("reused", self.reused),
             fmt("patched", self.patched),
+            fmt("DELETED", self.deleted),
         ])
 
     def close(self) -> None:
