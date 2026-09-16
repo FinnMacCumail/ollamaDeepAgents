@@ -1319,6 +1319,26 @@ def layer_defects(s: NetBoxSeeder, state: dict) -> None:
                        "hosts_without_vms": sorted(hosts_no_vms),
                        "vms_without_primary_ip": sorted(vms_no_primary)}
 
+    # D15 -- duplicate serial numbers. Seeded deliberately by the `assets`
+    # layer (hq-acc01 / hq-acc03 share HVL-DUP-0001). This is the community
+    # DuplicatedSerial.py audit class. Note the key is computed, so if the
+    # assets layer has NOT run this correctly reports zero rather than
+    # asserting a defect that does not exist.
+    import collections as _collections
+
+    serial_map = _collections.defaultdict(list)
+    for d in devices.values():
+        sn = (d.get("serial") or "").strip()
+        if sn:
+            serial_map[sn].append(d["name"])
+    dupes = {sn: sorted(names) for sn, names in serial_map.items() if len(names) > 1}
+    findings["D15"] = {
+        "description": "Duplicate serial number shared by more than one device",
+        "found": dupes,
+        "count": len(dupes),
+        "devices_affected": sorted(n for names in dupes.values() for n in names),
+    }
+
     # D18 -- half-terminated ("orphaned") cable.
     # NOT planted deliberately: deleting a device removes its CableTermination
     # but leaves the Cable itself alive with one empty side (verified

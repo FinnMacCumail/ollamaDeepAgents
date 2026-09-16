@@ -124,17 +124,25 @@ def _fetch_feedback(client: Client, run) -> dict:
     """Read a run's feedback, retrying while ingestion lags.
 
     LangSmith feedback is written asynchronously; a run that finishes slowly
-    (e.g. a tool-retry storm) can have its outputs persisted before all three
-    evaluator scores propagate. Retry until all 3 keys are present (or the run
+    (e.g. a tool-retry storm) can have its outputs persisted before every
+    evaluator score propagates. Retry until all of them are present (or the run
     errored, in which case partial/empty feedback is expected and final).
+
+    NB: this used to break at a hard-coded `len(fb) >= 3`, which predates the
+    reference-grounded `correctness_judge`. With four evaluators that could
+    return as soon as entity_coverage/completeness/tool_calls landed, silently
+    dropping `correctness` -- the PRIMARY metric -- to None. The expected count
+    is now derived from ALL_EVALUATORS so adding an evaluator cannot
+    reintroduce the bug.
     """
     retries = int(os.getenv("EVAL_FEEDBACK_RETRIES", "5"))
     delay = float(os.getenv("EVAL_FEEDBACK_DELAY", "6"))
+    expected = len(ALL_EVALUATORS)
     errored = bool(getattr(run, "error", None))
     fb: dict = {}
     for attempt in range(retries):
         fb = {f.key: f.score for f in client.list_feedback(run_ids=[run.id])}
-        if errored or len(fb) >= 3:
+        if errored or len(fb) >= expected:
             break
         if attempt < retries - 1:
             time.sleep(delay)
