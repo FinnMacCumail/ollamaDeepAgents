@@ -356,6 +356,16 @@ Device types come from `netbox-community/devicetype-library` via `Device-Type-Li
   Put containers in the same VRF as their children.
 - **Utilization quirks.** /31 and /32 count all addresses. `mark_utilized` means 100%. Utilization is
   computed live (never stored), so it is always consistent with the IPs present.
+- **`children` is the child-PREFIX count, NOT the address count** (verified 2026-09-16 across five
+  prefixes: `172.16.0.0/24` reports `children=0` while holding 30 IPs; `10.112.0.0/15` reports
+  `children=67` while holding 0). **No utilization percentage is exposed on the prefix serializer at all.**
+  - Gold-answer rule: **utilization % = (`?parent=<prefix>` IP count) ÷ usable addresses**, where usable =
+    `num_addresses - 2` for IPv4 prefixes shorter than /31, and all addresses for /31 and /32.
+  - Using `children` for utilization would make every such answer wrong.
+- **`mark_utilized` IS writable** (present and not read-only in POST *and* PUT metadata; an empirical PATCH
+  `False -> True` stuck and was reverted). It forces 100% regardless of child IPs, so it models a
+  "DHCP pool fully allocated" prefix whose utilization is *not* derivable by counting addresses -- a
+  deliberately different utilization rule for the benchmark to test.
 - **Rack utilization.** Counts reservations as occupied, excludes 0 U devices, and skips device types with
   `exclude_from_utilization`. Decide explicitly whether patch panels and PDUs count, and record it in the
   answer key.

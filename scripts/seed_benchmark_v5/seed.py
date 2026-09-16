@@ -34,7 +34,9 @@ LAYER_ORDER = [
     "org",           # tenant group/tenant/region/site groups/sites/locations/racks
     "devicetypes",   # 4 new device types + component templates
     "devices",       # devices + explicit power ports where no template exists
-    "ipam",          # VRFs, VLAN groups, VLANs, prefixes, IPs, primary IPs
+    "ipam",          # VRFs, VLAN groups, VLANs, prefixes
+    "ipaddrs",       # IPs on interfaces, primary IPs, defects D1/D2/D3
+    "ipfill",        # filler host IPs to reach the intended utilization spread
     "cabling",       # interface<->interface, patch-panel trunks, console, power
     "power",         # panels, feeds, PDU chains
     "circuits",      # providers' circuits + terminations
@@ -45,7 +47,8 @@ LAYER_ORDER = [
 
 # Layers implemented so far. The rest are written once the earlier layers are
 # verified against the live instance (deliberate: each builds on proven state).
-IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam"}
+IMPLEMENTED = {"lookups", "org", "devicetypes", "devices", "ipam", "ipaddrs",
+               "ipfill"}
 
 
 # --------------------------------------------------------------------------
@@ -468,12 +471,252 @@ def layer_ipam(s: NetBoxSeeder, state: dict) -> None:
     state["ipam_devices"] = devices
 
 
+# --------------------------------------------------------------------------
+# layer: ipaddrs  (IPs on interfaces + primary IPs + defects D1/D2/D3)
+# --------------------------------------------------------------------------
+# Devices that deliberately get NO primary IP (defect D1).
+NO_PRIMARY_IP = {"sea-dc1-leaf04", "hq-acc04", "por-br02-sw01"}
+
+# Which interface carries the management/primary address, per device type.
+# Verified template names -- see config.REUSE_DEVICE_TYPES.
+_MGMT_IFACE = {
+    "branch-router": "GigabitEthernet0/0/1",
+    "access-switch": "GigabitEthernet0",
+    "leaf": "fxp0",
+    "core": "em0",
+    "pa-3220": "management",
+    "cm7116-2": "net1",
+    "poweredge-r650": "idrac",
+    "u6-pro": "eth0",
+}
+# L3 devices get a Loopback0 (virtual) carrying a /32 with role=loopback.
+_LOOPBACK_ROLES = {"router", "core-switch", "distribution-switch", "firewall"}
+
+
+def _mgmt_prefix_for(site_slug: str) -> str | None:
+    """Management subnet per site (must match PREFIX_PLAN)."""
+    return {
+        "hvl-sea-dc1": "10.60.1.0/24",
+        "hvl-sea-hq": "10.60.20.0/27",
+        "hvl-tac-br01": "10.60.33.0/28",
+        "hvl-por-br02": "10.60.37.0/28",
+        "hvl-spo-br03": "10.60.41.0/28",
+    }.get(site_slug)
+
+
+def layer_ipaddrs(s: NetBoxSeeder, state: dict) -> None:
+    import ipaddress as _ip
+
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    sites = {x["slug"]: x for x in s.get("dcim/sites", tenant_id=tenant["id"])}
+    corp = s.get("ipam/vrfs", name=B.VRF_CORP["name"])
+    if not corp:
+        raise SeedError("HVL-CORP VRF missing -- run 'ipam' first")
+    corp = corp[0]
+
+    devices: dict[str, dict] = {}
+    for site in sites.values():
+        for d in s.get("dcim/devices", site_id=site["id"]):
+            devices[d["name"]] = d
+    by_key = {spec["name"]: spec for spec in B.DEVICES}
+
+    # running counter per management subnet
+    used: dict[str, int] = {}
+
+    def next_host(pfx: str) -> str:
+        net = _ip.ip_network(pfx)
+        idx = used.get(pfx, 0) + 1
+        used[pfx] = idx
+        return f"{net.network_address + idx}/{net.prefixlen}"
+
+    def assign(dev: dict, iface_name: str, address: str, *,
+               role: str | None = None, dns: str | None = None) -> dict | None:
+        ifaces = s.get("dcim/interfaces", device_id=dev["id"], name=iface_name)
+        if not ifaces:
+            return None
+        payload = {
+            "address": address, "status": "active", "vrf": _ref(corp),
+            "tenant": _ref(tenant),
+            "assigned_object_type": "dcim.interface",
+            "assigned_object_id": ifaces[0]["id"],
+        }
+        if role:
+            payload["role"] = role          # FIXED choice list
+        if dns:
+            payload["dns_name"] = dns
+        return s.get_or_create(
+            "ipam/ip-addresses",
+            match={"address": address.split("/")[0], "vrf_id": corp["id"]},
+            payload=s.tagged(payload),
+        )
+
+    primaries: list[tuple[dict, dict]] = []
+    loopback_n = 0
+
+    for name, dev in sorted(devices.items()):
+        spec = by_key.get(name)
+        if not spec:
+            continue
+        tkey, role = spec["type"], spec["role"]
+        # patch panels and PDUs are passive: no IP, BY DESIGN (not a defect)
+        if tkey in {"patch-panel-copper", "patch-panel-fiber", "pdu"}:
+            continue
+
+        mgmt_pfx = _mgmt_prefix_for(spec["site"])
+        primary = None
+
+        # L3 devices: Loopback0 /32 becomes the primary IP
+        if role in _LOOPBACK_ROLES:
+            loopback_n += 1
+            lo = s.get_or_create(
+                "dcim/interfaces",
+                match={"device_id": dev["id"], "name": "Loopback0"},
+                payload={"device": _ref(dev), "name": "Loopback0",
+                         "type": "virtual", "enabled": True},
+            )
+            addr = f"{B.LOOPBACK_BASE}{loopback_n}/32"
+            primary = s.get_or_create(
+                "ipam/ip-addresses",
+                match={"address": addr.split("/")[0], "vrf_id": corp["id"]},
+                payload=s.tagged({
+                    "address": addr, "status": "active", "role": "loopback",
+                    "vrf": _ref(corp), "tenant": _ref(tenant),
+                    "dns_name": f"{name}.hvl.example",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": lo["id"],
+                }),
+            )
+
+        # everything else: a management address on its mgmt interface
+        if primary is None and mgmt_pfx:
+            iface = _MGMT_IFACE.get(tkey)
+            if iface:
+                primary = assign(dev, iface, next_host(mgmt_pfx),
+                                 dns=f"{name}.hvl.example")
+
+        if primary and name not in NO_PRIMARY_IP:
+            primaries.append((dev, primary))
+
+    # primary_ip4 must reference an IP already on one of the device's own
+    # interfaces, so this is a SECOND pass after the addresses exist.
+    for dev, ip in primaries:
+        if dev.get("primary_ip4") and not s.dry_run:
+            continue
+        s.patch("dcim/devices", dev["id"], {"primary_ip4": _ref(ip)})
+
+    # ---- planted IPAM defects --------------------------------------------
+    # D2: IPs with NO parent prefix (typo'd subnets that exist nowhere).
+    # BOTH addresses must fall OUTSIDE 10.60.0.0/16 -- verified 2026-09-16 that
+    # 10.60.50.1 is contained by our own /16 container, which would void the
+    # defect. 10.61/10.62 are clear of both the demo space and HVL space.
+    for dev_name, addr in [("sea-dc1-oob-sw01", "10.61.0.10/24"),
+                           ("spo-br03-rtr01", "10.62.0.1/24")]:
+        dev = devices.get(dev_name)
+        if dev:
+            assign(dev, _MGMT_IFACE[by_key[dev_name]["type"]], addr)
+
+    # D3: mask does not match the enclosing prefix (/24 inside a /26)
+    dev = devices.get("sea-dc1-esx01")
+    if dev:
+        assign(dev, "eno2", "10.60.3.20/24")
+
+    state["ip_primaries"] = len(primaries)
+
+
+# --------------------------------------------------------------------------
+# layer: ipfill  (reach the intended utilization spread)
+# --------------------------------------------------------------------------
+# Device management addresses alone leave every prefix near-empty (measured:
+# 6 of 27 active prefixes held any IP, max ~6%). Utilization and
+# next-available questions are degenerate until the prefixes actually FILL --
+# so this layer adds non-device host addresses (printers, handsets, APs, DHCP
+# reservations) up to each prefix's `fill_target` in PREFIX_PLAN.
+_FILL_LABELS = {
+    "access-data": "host", "access-voice": "voip", "access-wireless": "wlan",
+    "management": "mgmt", "server": "srv", "guest": "guest",
+}
+
+
+def layer_ipfill(s: NetBoxSeeder, state: dict) -> None:
+    import ipaddress as _ip
+
+    tenant = s.get("tenancy/tenants", slug=C.TENANT["slug"])
+    if not tenant:
+        raise SeedError("tenant missing -- run 'org' first")
+    tenant = tenant[0]
+    corp = s.get("ipam/vrfs", name=B.VRF_CORP["name"])
+    if not corp:
+        raise SeedError("HVL-CORP VRF missing -- run 'ipam' first")
+    corp = corp[0]
+
+    for pfx, status, role, site_slug, _vid, target, _note in B.PREFIX_PLAN:
+        if status != "active" or not target:
+            continue
+        net = _ip.ip_network(pfx)
+        have = s.count("ipam/ip-addresses", parent=pfx, vrf_id=corp["id"])
+        if have >= target:
+            # already filled -- tally it, or a re-run reports silence and a
+            # genuine no-op becomes indistinguishable from a broken layer
+            s._tally(s.reused, "ipam/prefixes (already filled)")
+            continue
+
+        # skip .0 (network) and the gateway .1, and never exceed the subnet
+        capacity = net.num_addresses - 2 if net.prefixlen < 31 else net.num_addresses
+        want = min(target, capacity)
+        label = _FILL_LABELS.get(role or "", "host")
+        made = 0
+        for offset in range(2, capacity + 2):
+            if have + made >= want:
+                break
+            addr = f"{net.network_address + offset}/{net.prefixlen}"
+            if s.get("ipam/ip-addresses", address=addr.split("/")[0],
+                     vrf_id=corp["id"]):
+                continue
+            s.create("ipam/ip-addresses", s.tagged({
+                "address": addr, "status": "active",
+                "vrf": _ref(corp), "tenant": _ref(tenant),
+                "dns_name": f"{label}-{offset:03d}.{(site_slug or 'hvl')}.example",
+                "description": f"{label} host",
+            }))
+            made += 1
+
+    # /31 point-to-point links: BOTH addresses are usable (RFC 3021), so a
+    # fully-provisioned link is GENUINELY 100% utilized -- a different 100%
+    # from the mark_utilized case below, and a distinct utilization band.
+    for p2p in B.P2P_LINKS:
+        net = _ip.ip_network(p2p)
+        addresses = list(net) if net.prefixlen >= 31 else list(net.hosts())
+        for host in addresses:
+            if s.get("ipam/ip-addresses", address=str(host), vrf_id=corp["id"]):
+                s._tally(s.reused, "ipam/ip-addresses")
+                continue
+            s.create("ipam/ip-addresses", s.tagged({
+                "address": f"{host}/{net.prefixlen}", "status": "active",
+                "vrf": _ref(corp), "tenant": _ref(tenant),
+                "description": f"P2P link {p2p}",
+            }))
+
+    # A DHCP pool marked as fully used -- gives one prefix a hard 100% that is
+    # NOT produced by counting child IPs (tests a different utilization rule).
+    pool = s.get("ipam/prefixes", prefix="10.60.19.0/24", vrf_id=corp["id"])
+    if pool:
+        if pool[0].get("mark_utilized"):
+            s._tally(s.reused, "ipam/prefixes (already marked)")
+        else:
+            s.patch("ipam/prefixes", pool[0]["id"], {"mark_utilized": True})
+
+
 LAYERS = {
     "lookups": layer_lookups,
     "org": layer_org,
     "devicetypes": layer_devicetypes,
     "devices": layer_devices,
     "ipam": layer_ipam,
+    "ipaddrs": layer_ipaddrs,
+    "ipfill": layer_ipfill,
 }
 
 

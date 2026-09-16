@@ -213,6 +213,14 @@ VLANS_DC = [(1110, "PROD"), (1120, "VMOTION"), (1130, "HYPERVISOR-MGMT"),
 
 # --------------------------------------------------------------------------
 # IPAM -- utilization spread is the point: 0% / ~9% / ~53% / ~80% / 93% / 100%
+#
+# OPEN GAP (measured 2026-09-16): device management addresses ALONE do not
+# produce this spread. Only 3-4 devices per branch need an address, so a /28
+# lands near 25%, not the intended 93%. The `fill_target` column below is the
+# NUMBER OF ADDRESSES each prefix should end up holding; reaching it requires a
+# filler pass that creates non-device host IPs (printers, APs, DHCP-range
+# reservations, VIPs). Until that pass runs, the utilization questions remain
+# partly degenerate -- which is precisely the failure mode v5 exists to fix.
 # --------------------------------------------------------------------------
 VRF_CORP = {"name": "HVL-CORP", "rd": "65060:100", "enforce_unique": True}
 VRF_GUEST = {"name": "HVL-GUEST", "rd": "65060:200", "enforce_unique": False}
@@ -357,11 +365,19 @@ VMS = (
 # Expected counts are TARGETS; gold answers must be recomputed from the API.
 # --------------------------------------------------------------------------
 DEFECTS = {
+    # SCOPE MATTERS (measured 2026-09-16): scoped to ACTIVE devices the answer
+    # is 3. Scoped to ALL HVL devices it is 4 -- `boi-br04-sw01` is `planned`
+    # and legitimately has no address yet. State the scope in the question, or
+    # the reference answer is ambiguous (the exact failure v4 hit).
     "D1": {"desc": "Active device with no primary IP",
-           "objects": ["sea-dc1-leaf04", "hq-acc04", "por-br02-sw01"], "expect": 3},
+           "objects": ["sea-dc1-leaf04", "hq-acc04", "por-br02-sw01"], "expect": 3,
+           "expect_all_statuses": 4,
+           "also": ["boi-br04-sw01 (planned -- excluded when scoped to active)"]},
+    # NB: both MUST be outside 10.60.0.0/16, or our own container becomes their
+    # parent and the defect is void (verified against the live instance).
     "D2": {"desc": "IP with no parent prefix",
            "objects": ["10.61.0.10/24 on sea-dc1-oob-sw01",
-                       "10.60.50.1/24 on spo-br03-rtr01"], "expect": 2},
+                       "10.62.0.1/24 on spo-br03-rtr01"], "expect": 2},
     "D3": {"desc": "IP mask does not match enclosing prefix",
            "objects": ["10.60.3.20/24 inside 10.60.3.0/26"], "expect": 1},
     "D4": {"desc": "Active prefix nested inside an active non-container prefix",
