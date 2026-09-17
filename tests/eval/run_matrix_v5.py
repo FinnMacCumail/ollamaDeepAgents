@@ -26,8 +26,9 @@ Usage:
     # smoke run, one model, whatever is currently in dataset_v5.py
     ./venv/bin/python -m tests.eval.run_matrix_v5
 
-    # wider sweep
-    EVAL_MODELS="ollama:deepseek-v4-pro:cloud,ollama:glm-5:cloud" \
+    # wider sweep (see the MODEL AVAILABILITY note at the foot of this file --
+    # glm-5:cloud and gemini-3-flash-preview:cloud are RETIRED and return 410)
+    EVAL_MODELS="ollama:deepseek-v4-pro:cloud,ollama:qwen3.5:397b-cloud" \
         ./venv/bin/python -m tests.eval.run_matrix_v5
 
     EVAL_FORCE_RERUN=1 ./venv/bin/python -m tests.eval.run_matrix_v5
@@ -267,3 +268,26 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# MODEL AVAILABILITY (measured 2026-09-17)
+#
+# `ollama list` is NOT a reliable guide for :cloud models. It still lists
+# entries whose cloud endpoint has been retired, and the run only discovers
+# this when the first example executes -- 40 minutes into a 90-item sweep.
+# Preflight any new model with a one-token invoke before committing a run.
+#
+#   RETIRED (HTTP 410, both retired 2026-07-15):
+#     glm-5:cloud
+#     gemini-3-flash-preview:cloud
+#
+#   ALIVE:
+#     deepseek-v4-flash:cloud, deepseek-v4-pro:cloud
+#     qwen3.5:397b-cloud, kimi-k2.6:cloud, minimax-m3:cloud
+#     nemotron-3-ultra:cloud, nemotron-3-super:cloud
+#
+# Note gpt-oss:120b-cloud is deliberately NOT used as a subject model: the
+# judge is gpt-oss:20b, so scoring it would be same-family self-judgement,
+# the bias evaluators.py's docstring warns about.
+# ---------------------------------------------------------------------------
