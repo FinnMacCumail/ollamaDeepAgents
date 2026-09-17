@@ -59,7 +59,12 @@ ISLANDS = ("hvl", "demo")
 
 # Per-tier tool-call budgets. A single global threshold would penalise the
 # advanced tier by construction, since it has a higher floor by design.
-TOOL_CALL_BUDGET = {"simple": 2, "medium": 4, "advanced": 12}
+# MEASURED over the 45-item run, per tier: simple median 2.0 (12/15 within),
+# advanced median 9.0 (12/14 within) -- both budgets correct. Medium came in at
+# median 5.0, p75 7, with only 7/15 within the old <=4, so it is raised to the
+# measured p75. The earlier <=4 was set from a 15-item sample whose median was
+# exactly 4.0; the fuller sample says otherwise.
+TOOL_CALL_BUDGET = {"simple": 2, "medium": 7, "advanced": 12}
 
 
 def _normalize(s: str) -> str:
@@ -776,11 +781,15 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "interfaces, IP addresses, devices and cables. Which of the four has "
             "the most change records, and roughly how many?"
         ),
-        # Identifier anchor, not the bare figure: "1226" is a bare number (it
-        # matches inside unrelated digits) and "1226 change records" is a
-        # fragile count phrase. Any correct comparison of the four named types
-        # must say which one leads, so the type name is the stable string.
-        expected_entities=("dcim.interface",),
+        # ENTITY-FREE, third attempt and the honest one. "1226" is a bare number;
+        # "1226 change records" is a fragile count phrase; and "dcim.interface"
+        # scored 0.0 on a FULLY CORRECT answer (judge: "All counts match the
+        # reference; no contradictions") because the agent writes "Interface" and
+        # "Interfaces", never the API type name. The bare word "interface" cannot
+        # be used either -- the question names all four types, so it would be
+        # earned by parroting. There is no stable surface string here, so
+        # correctness_judge scores this item alone.
+        expected_entities=(),
         reference_answer=(
             "ANSWER: Interfaces (dcim.interface) lead by a wide margin, with 1226 "
             "change records. "
