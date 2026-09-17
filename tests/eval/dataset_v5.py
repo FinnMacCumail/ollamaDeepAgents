@@ -939,14 +939,19 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "address, and which of them is not even assigned to a host device?"
         ),
         expected_entities=("hvl-app08", "hvl-backup01", "hvl-test01"),
+        # CORRECTED after the 45-item run. The earlier reference claimed only
+        # hvl-test01 lacked a host, and the judge duly penalised an agent that
+        # correctly said hvl-backup01 lacks one too. Live: hvl-backup01 and
+        # hvl-test01 BOTH have device=None; only hvl-app08 has a host. I had
+        # over-read a probe that sampled just three VMs.
         reference_answer=(
             "ANSWER: Three of the 28 VMs have no primary IP: hvl-app08, "
-            "hvl-backup01 and hvl-test01. Of those, hvl-test01 is also assigned to "
-            "no host device -- it belongs to a cluster only.\n"
+            "hvl-backup01 and hvl-test01. Of those, two are also assigned to no "
+            "host device -- hvl-backup01 and hvl-test01 belong to a cluster only. "
+            "hvl-app08 does have a host, sea-dc1-esx04.\n"
             "ACCEPTABLE VARIANTS: any order.\n"
             "CONTRADICTIONS: naming a VM that does have a primary IP, such as "
-            "hvl-app01; claiming hvl-app08 has no host, since it runs on "
-            "sea-dc1-esx04."
+            "hvl-app01; claiming hvl-app08 has no host."
         ),
         category="vms-without-primary-ip",
         difficulty="advanced", island="hvl", answer_type="count", domain="virt",
@@ -1112,10 +1117,15 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         source_query="/api/ipam/vlan-groups/ -> utilization: HVL-SEA-DC1 0.15, other HVL groups 0.12",
     ),
     BenchmarkExampleV5(
+        # SCOPE PINNED after the 45-item run. The earlier wording ("NC State
+        # University has...") left tenant-vs-site scope open, and the agent
+        # answered 20 (by site) against my 19 (by tenant). Both were defensible,
+        # so the item was unanswerable as written -- exactly the ambiguity I had
+        # already noted for this site and then failed to pin down.
         question=(
-            "NC State University has far more racks than devices. How many of "
-            "each does it have, and what does that imply about the site's build "
-            "state?"
+            "Counting only devices that carry the NC State University tenant, "
+            "how do NC State's rack and device totals compare, and what does "
+            "that imply about the build state?"
         ),
         expected_entities=("NCSU-065",),
         reference_answer=(
@@ -1125,7 +1135,8 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "ACCEPTABLE VARIANTS: racks provisioned before hardware; mostly empty "
             "racks.\n"
             "CONTRADICTIONS: claiming devices outnumber racks; claiming the racks "
-            "are full."
+            "are full; reporting 20 devices, which counts an unnamed tenantless "
+            "application server at NCSU-065 that carries no tenant."
         ),
         category="rack-to-device-ratio",
         difficulty="advanced", island="demo", answer_type="explanation", domain="dcim",
