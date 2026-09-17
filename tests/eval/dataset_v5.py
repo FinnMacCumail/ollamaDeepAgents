@@ -1521,14 +1521,21 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
     BenchmarkExampleV5(
         question="Which device platforms have at least one device assigned to them?",
         expected_entities=("Cisco IOS", "Ubuntu 22.04"),
+        # SCOPE PINNED. The first draft said the other five platforms "have none",
+        # which is true of DEVICES but false of VMs: RHEL 9 carries 5 virtual
+        # machines and Windows Server 2022 carries 2. An agent checking platform
+        # usage generally would have been marked wrong for being right -- the
+        # same scope trap as rack-to-device-ratio. The reference now states the
+        # device scope and names the VM counts so a broader answer cannot clash.
         reference_answer=(
-            "ANSWER: Only two of the seven platforms are in use: Cisco IOS with 13 "
-            "devices and Ubuntu 22.04 with 9. The other five -- PAN-OS 11, RHEL 9, "
-            "Ubuntu Linux 18.04, Ubuntu Linux 20.04 and Windows Server 2022 -- have "
-            "none.\n"
+            "ANSWER: Counting physical devices only, two of the seven platforms "
+            "are in use: Cisco IOS with 13 devices and Ubuntu 22.04 with 9. The "
+            "other five -- PAN-OS 11, RHEL 9, Ubuntu Linux 18.04, Ubuntu Linux "
+            "20.04 and Windows Server 2022 -- have no devices, though RHEL 9 and "
+            "Windows Server 2022 are used by virtual machines.\n"
             "ACCEPTABLE VARIANTS: any order.\n"
-            "CONTRADICTIONS: naming an unused platform as having devices; claiming "
-            "all seven are in use."
+            "CONTRADICTIONS: naming a platform with no devices as having devices; "
+            "claiming all seven platforms carry devices."
         ),
         category="platforms-in-use",
         difficulty="simple", island="demo", answer_type="list", domain="dcim",
@@ -1758,6 +1765,304 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         category="damaged-rack-reservation",
         difficulty="advanced", island="demo", answer_type="boolean", domain="dcim",
         source_query="/api/dcim/rack-reservations/ -> R101 units [20,21] user=bob description='Damaged - DO NOT USE'",
+    ),
+
+    # ----------------------------------------------------------------------
+    # BATCH 6 (final 15, mixed tiers 5/5/5). Completes the set at 90.
+    #
+    # STRICTLY zero dcim: it ends on 27 against a 12.9 even share, fourteen
+    # over, because batch 5 spent four slots on rack reservations and platforms.
+    # This batch loads virt, circuits and tenancy instead.
+    #
+    # Islands are 10 hvl / 5 demo, split 3-2 / 4-1 / 3-2 across the tiers. That
+    # lands island x difficulty on exactly 19/19/19 hvl and 11/11/11 demo.
+    # Hitting the raw 60/30 target instead would have forced a 13-2 final batch
+    # and broken that balance, which is the property that actually stops tenant
+    # name proxying for difficulty.
+    #
+    # Types are fully determined by what is left: boolean 4, absence 4, count 3,
+    # list 3, explanation 1.
+    # ----------------------------------------------------------------------
+
+    # ---- simple ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Do all Halvorsen Logistics circuits have two terminations recorded? "
+            "Name any that have only one."
+        ),
+        expected_entities=("CF-DIA-1001", "SW-LTE-4001"),
+        reference_answer=(
+            "ANSWER: No. Seven of the 14 have a single termination: CF-DIA-1001, "
+            "CF-DIA-1003, CF-METRO-1002, RB-BB-3001, RB-BB-3002, RB-BB-3003 and "
+            "SW-LTE-4001. The seven EV-MPLS circuits each have two.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: claiming every Halvorsen circuit has two "
+            "terminations; naming an EV-MPLS circuit as singly terminated."
+        ),
+        category="single-termination-circuits",
+        difficulty="simple", island="hvl", answer_type="boolean", domain="circuits",
+        source_query="/api/circuits/circuit-terminations/ grouped by circuit -> 7 HVL circuits with 1, the 7 EV-MPLS with 2",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many Halvorsen Logistics virtual machines have no network "
+            "interface at all, and which are they?"
+        ),
+        expected_entities=("hvl-backup01", "hvl-test01"),
+        reference_answer=(
+            "ANSWER: Two of the 28: hvl-backup01 and hvl-test01. The tenant's VMs "
+            "carry 26 interfaces between them, so every other VM has at least one.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a VM that does have an interface, such as "
+            "hvl-app01; claiming every VM has one."
+        ),
+        category="vms-without-interfaces",
+        difficulty="simple", island="hvl", answer_type="count", domain="virt",
+        source_query="/api/virtualization/interfaces/?virtual_machine_id=<each> -> 26 across 28 VMs; 2 have none",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Across all Halvorsen Logistics PDUs, how many of the available power "
+            "outlets are actually in use?"
+        ),
+        expected_entities=("17 of the 96",),
+        reference_answer=(
+            "ANSWER: 17 of the 96 outlets are in use. sea-dc1-pdu01 and "
+            "sea-dc1-pdu02 account for 8 each and sea-dc1-pdu03 for one; the other "
+            "nine PDUs have nothing plugged in.\n"
+            "ACCEPTABLE VARIANTS: seventeen.\n"
+            "CONTRADICTIONS: any other total; claiming most outlets are in use."
+        ),
+        category="pdu-outlet-utilisation",
+        difficulty="simple", island="hvl", answer_type="count", domain="power",
+        source_query="/api/dcim/power-outlets/?device_id=<12 HVL pdus> -> 96 outlets, 17 with connected_endpoints",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which user accounts other than seeder appear against entries in the "
+            "NetBox change log?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. All 3543 change-log entries are attributed to the "
+            "account seeder. The accounts alice and bob exist and appear on rack "
+            "reservations, but never in the change log.\n"
+            "ACCEPTABLE VARIANTS: zero; only seeder.\n"
+            "CONTRADICTIONS: naming alice, bob or any other account as having made "
+            "change-log entries."
+        ),
+        category="absence-other-changelog-users",
+        difficulty="simple", island="demo", answer_type="absence", domain="changelog",
+        source_query="/api/core/object-changes/ -> user_name 'seeder' on all 3543",
+        recompute_on_reseed=True,
+        # No forbidden entities. alice and bob were listed here and BOTH appear in
+        # this item's own reference, which names them precisely to rule them out
+        # -- a leak by construction, the same mistake as the batch-3 router item.
+        # The reference is right to mention them; the forbidden list was wrong.
+    ),
+    BenchmarkExampleV5(
+        question="Which contacts are assigned the Billing role in NetBox?",
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. The Billing role is defined but no contact holds it. All "
+            "three contact assignments use the other two roles: two Administrative "
+            "and one Operational.\n"
+            "ACCEPTABLE VARIANTS: zero; the role is unused.\n"
+            "CONTRADICTIONS: naming any contact as holding the Billing role; "
+            "claiming the role does not exist in NetBox."
+        ),
+        category="absence-billing-contacts",
+        difficulty="simple", island="demo", answer_type="absence", domain="tenancy",
+        source_query="/api/tenancy/contact-assignments/ -> 3 total: Administrative 2, Operational 1, Billing 0",
+        forbidden_entities=("Dwight Schrute", "Michael Scott", "Pamela Halpert"),
+    ),
+
+    # ---- medium ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which provider networks are defined in NetBox, and which provider "
+            "owns each one?"
+        ),
+        expected_entities=("Evergreen MPLS Core", "Level3 MPLS"),
+        reference_answer=(
+            "ANSWER: Two. Evergreen MPLS Core belongs to Evergreen Networks, and "
+            "Level3 MPLS belongs to Level 3.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: attributing either network to the wrong provider; "
+            "naming a provider network that does not exist, such as one for "
+            "Cascadia Fiber."
+        ),
+        category="provider-networks",
+        difficulty="medium", island="hvl", answer_type="list", domain="circuits",
+        source_query="/api/circuits/provider-networks/ -> 2: Evergreen MPLS Core (Evergreen Networks), Level3 MPLS (Level 3)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Do any Halvorsen Logistics virtual machines have a role assigned to "
+            "them?"
+        ),
+        expected_entities=("every one has a platform",),
+        reference_answer=(
+            "ANSWER: No. Not one of the 28 Halvorsen virtual machines has a role "
+            "set, even though every one has a platform, a vCPU count, memory and "
+            "disk recorded.\n"
+            "ACCEPTABLE VARIANTS: none of them; zero.\n"
+            "CONTRADICTIONS: naming a VM as having a role; claiming roles are set "
+            "on some of them."
+        ),
+        category="vms-without-roles",
+        difficulty="medium", island="hvl", answer_type="boolean", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> role is null on all 28; platform set on all 28",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which contacts are attached to site DM-Scranton, and what role does "
+            "each hold?"
+        ),
+        expected_entities=("Dwight Schrute", "Michael Scott", "Pamela Halpert"),
+        reference_answer=(
+            "ANSWER: Three: Dwight Schrute as Operational, and Michael Scott and "
+            "Pamela Halpert both as Administrative. These are the only contact "
+            "assignments in the instance.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: giving any contact the wrong role; attaching a "
+            "contact to a different site."
+        ),
+        category="site-contacts",
+        difficulty="medium", island="demo", answer_type="list", domain="tenancy",
+        source_query="/api/tenancy/contact-assignments/ -> all 3 on dcim.site DM-Scranton",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which prefixes belonging to Halvorsen Logistics have no tenant "
+            "assigned to them?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. All 42 Halvorsen prefixes carry the tenant. NetBox does "
+            "hold 22 tenantless prefixes, but they sit in the Alpha through Echo "
+            "VRFs and the Shared VRF, none of which is scoped to a Halvorsen site.\n"
+            "ACCEPTABLE VARIANTS: zero.\n"
+            "CONTRADICTIONS: naming a Halvorsen prefix as tenantless; claiming the "
+            "22 tenantless prefixes belong to Halvorsen."
+        ),
+        category="absence-tenantless-hvl-prefixes",
+        difficulty="medium", island="hvl", answer_type="absence", domain="ipam",
+        source_query="/api/ipam/prefixes/?tenant=hvl -> 42; tenantless overall 22, none scoped to an HVL site",
+        forbidden_entities=("10.60.", "192.168.100.0/24"),
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How much total disk is provisioned across all Halvorsen Logistics "
+            "virtual machines?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: 5939200 MB in total, which is a little over 5.9 million MB or "
+            "roughly 5.7 TB, across the 28 VMs.\n"
+            "ACCEPTABLE VARIANTS: 5,939,200 MB; about 5.7 TB; about 5.8 TB.\n"
+            "CONTRADICTIONS: any total that is not close to 5939200 MB; reporting "
+            "the memory figure of 294912 MB instead."
+        ),
+        category="vm-disk-aggregate",
+        difficulty="medium", island="hvl", answer_type="count", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> sum(disk) = 5939200 MB over 28 VMs",
+    ),
+
+    # ---- advanced -------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Most singly-terminated circuits in NetBox are internet-style services "
+            "where no far end is modelled. One Halvorsen circuit does not fit that "
+            "pattern. Which is it, and why is it the odd one out?"
+        ),
+        expected_entities=("CF-METRO-1002",),
+        reference_answer=(
+            "ANSWER: CF-METRO-1002, from Cascadia Fiber. It is a Dark Fiber "
+            "circuit, yet it has only one termination. The other singly-terminated "
+            "circuits are Internet Access, Broadband or LTE services, where having "
+            "no Z side is expected; dark fibre normally runs between two known "
+            "points.\n"
+            "ACCEPTABLE VARIANTS: metro dark fibre.\n"
+            "CONTRADICTIONS: naming an Internet Access, Broadband or LTE circuit as "
+            "the anomaly; claiming every singly-terminated circuit is expected."
+        ),
+        category="dark-fiber-anomaly",
+        difficulty="advanced", island="hvl", answer_type="explanation", domain="circuits",
+        source_query="singly-terminated by type -> Internet Access 15, Broadband 3, LTE 1, Dark Fiber 1 (CF-METRO-1002)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "NetBox holds a large number of Google Cloud clusters. Do any of them "
+            "host virtual machines?"
+        ),
+        expected_entities=("DigitalOcean",),
+        reference_answer=(
+            "ANSWER: No. All 23 Google Cloud clusters are empty. Every one of the "
+            "180 demo virtual machines sits on one of the 9 DigitalOcean clusters, "
+            "20 apiece.\n"
+            "ACCEPTABLE VARIANTS: none of them; zero.\n"
+            "CONTRADICTIONS: naming a Google Cloud cluster as hosting VMs; "
+            "claiming the VMs are spread across both cluster types."
+        ),
+        category="empty-cloud-clusters",
+        difficulty="advanced", island="demo", answer_type="boolean", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?cluster_id=<each> -> 23 gc-* clusters all 0; 9 DO-* clusters 20 each",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Are there any tenants in NetBox that belong to neither of the two "
+            "tenant groups?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. All 12 tenants are grouped: 11 in Customers and one, "
+            "Halvorsen Logistics, in Enterprise. No tenant is left ungrouped.\n"
+            "ACCEPTABLE VARIANTS: zero; every tenant is grouped.\n"
+            "CONTRADICTIONS: naming a tenant as ungrouped; giving a total other "
+            "than 12 tenants."
+        ),
+        category="absence-ungrouped-tenants",
+        difficulty="advanced", island="demo", answer_type="absence", domain="tenancy",
+        source_query="/api/tenancy/tenants/ -> 12, group set on all: Customers 11, Enterprise 1",
+        forbidden_entities=("Cyberdyne Systems", "Initech", "Umbrella Corporation"),
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "According to the change log, was any Halvorsen Logistics device other "
+            "than the access point por-br02-ap01 ever deleted?"
+        ),
+        expected_entities=("only device deletion",),
+        reference_answer=(
+            "ANSWER: No. The change log holds exactly one device deletion, and it "
+            "is por-br02-ap01. It is the only device deletion among the 22 deletion "
+            "records; the other 21 are the cables, terminations, interface and IP "
+            "address that went with it.\n"
+            "ACCEPTABLE VARIANTS: none; just the one.\n"
+            "CONTRADICTIONS: naming another deleted device; claiming several "
+            "devices were removed."
+        ),
+        category="sole-device-deletion",
+        difficulty="advanced", island="hvl", answer_type="boolean", domain="changelog",
+        source_query="/api/core/object-changes/?action=delete -> 22 records, changed_object_type dcim.device on exactly 1 (prechange name por-br02-ap01)",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which operating-system platforms are recorded on Halvorsen Logistics "
+            "virtual machines, and how many VMs run each?"
+        ),
+        expected_entities=("Ubuntu 22.04", "RHEL 9", "Windows Server 2022"),
+        reference_answer=(
+            "ANSWER: Three platforms across the 28 VMs: Ubuntu 22.04 on 21, RHEL 9 "
+            "on 5 and Windows Server 2022 on 2.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a platform no VM runs, such as Cisco IOS or "
+            "PAN-OS 11; giving any platform the wrong VM count."
+        ),
+        category="vm-platform-split",
+        difficulty="advanced", island="hvl", answer_type="list", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> platform: Ubuntu 22.04 21, RHEL 9 5, Windows Server 2022 2",
     ),
 )
 
