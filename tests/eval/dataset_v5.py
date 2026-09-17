@@ -119,6 +119,11 @@ class BenchmarkExampleV5:
 # which breaks the substring match even though the answer is right.
 _COUNT_PHRASE = re.compile(r"\d+\s+[a-z][a-z-]*s?", re.I)
 
+# An IPv4 address or CIDR prefix, with or without a mask. These normalise to
+# pure digits but are precise identifiers, so they are exempt from the
+# bare-number rule.
+_IP_LIKE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$")
+
 _BANNED_TEMPORAL = (
     "last 7 days", "last week", "this week", "recently", "today",
     "currently", "right now", "how long ago", " still ", " now ",
@@ -164,7 +169,10 @@ def validate_examples(examples) -> tuple[list[str], list[str]]:
             if len(e.strip()) < 5:
                 warns.append(f"{tag}: entity {e!r} is short (<5 chars); "
                              "substring matching will over-fire")
-            if _normalize(e).strip().isdigit():
+            # An IP address or CIDR prefix normalises to digits ("10.61.0.10" ->
+            # "1061010") but is a STRONG identifier anchor, not a bare figure.
+            # Exempt it, or the rule misfires on every IPAM item.
+            if _normalize(e).strip().isdigit() and not _IP_LIKE.match(e.strip()):
                 errs.append(f"{tag}: entity {e!r} is a bare number -- it matches "
                             "inside unrelated digits (e.g. '3' in '13 devices')")
             if "%" in e:
@@ -789,6 +797,328 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         category="tenantless-devices",
         difficulty="medium", island="demo", answer_type="count", domain="tenancy",
         source_query="/api/dcim/devices/?site=<14 DM slugs> -> 52, of which 13 have tenant=null, all role=patch-panel",
+    ),
+
+    # ----------------------------------------------------------------------
+    # BATCH 3 (advanced tier, 15 items: 10 HVL / 5 demo).
+    #
+    # Advanced = TWO OR MORE hops, or aggregation combined with filtering, or
+    # absence reasoning over a traversal. Budget <=12 calls.
+    #
+    # Composition is deliberately corrected here: batches 1-2 over-produced
+    # `list` (11 of 30) and `dcim` (17 of 30), so batch 3 is weighted to counts,
+    # values and booleans, and to the thin domains (ipam, circuits, virt, power,
+    # changelog).
+    #
+    # Ground truth is recomputed LIVE, never taken from blueprint.DEFECTS, which
+    # has now disagreed with the instance six times. Two defects were DROPPED
+    # after checking: D9 ("console port not connected") is 22 ports across 14
+    # devices live, not the 1 the key claims; and rack `utilization` is absent
+    # from this serializer, so no rack-utilization item is answerable.
+    # ----------------------------------------------------------------------
+
+    # ---- HVL island -----------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Some Halvorsen Logistics IP addresses sit outside every prefix "
+            "defined in their own VRF. Which addresses are they, and which "
+            "device holds each one?"
+        ),
+        expected_entities=("10.61.0.10", "10.62.0.1",
+                           "sea-dc1-oob-sw01", "spo-br03-rtr01"),
+        reference_answer=(
+            "ANSWER: Two, both in VRF HVL-CORP: 10.61.0.10/24 on "
+            "sea-dc1-oob-sw01, and 10.62.0.1/24 on spo-br03-rtr01. No prefix in "
+            "that VRF contains either address.\n"
+            "ACCEPTABLE VARIANTS: any order; addresses with or without the mask.\n"
+            "CONTRADICTIONS: naming an address that does fall inside a prefix; "
+            "claiming every address has a parent prefix; naming the intentional "
+            "192.168.100.0/24 guest duplicates, which are not orphans."
+        ),
+        category="orphan-ip-no-parent-prefix",
+        difficulty="advanced", island="hvl", answer_type="list", domain="ipam",
+        source_query="all 132 prefixes grouped by VRF, then every IP tested for containment in its own VRF -> 2 orphans",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "The uplink on hq-acc04 does not reach its distribution switch, while "
+            "the matching uplink on hq-acc03 does. Trace both and explain what "
+            "differs."
+        ),
+        expected_entities=("hq-dist01",),
+        reference_answer=(
+            "ANSWER: hq-acc03's uplink GigabitEthernet1/0/48 traces through the "
+            "patch panels and terminates on hq-dist01, so it is reachable. "
+            "hq-acc04's GigabitEthernet1/0/48 is cabled but the path dead-ends at "
+            "an unpatched panel port, so it has no far-end endpoint and is "
+            "unreachable.\n"
+            "ACCEPTABLE VARIANTS: broken patch path; missing panel-to-panel jumper.\n"
+            "CONTRADICTIONS: claiming hq-acc04 reaches a distribution switch; "
+            "claiming neither uplink is cabled; blaming a device status."
+        ),
+        category="broken-cable-path",
+        difficulty="advanced", island="hvl", answer_type="explanation", domain="dcim",
+        source_query="/api/dcim/interfaces/?device_id=<acc03|acc04> -> Gi1/0/48 reachable=True (hq-dist01:xe-0/0/1) vs reachable=False (no endpoints)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Each Halvorsen Logistics hypervisor host has two power supplies. "
+            "Which host has exactly one of its two supplies connected to a PDU "
+            "outlet, and which outlet is it?"
+        ),
+        expected_entities=("sea-dc1-esx05", "sea-dc1-pdu03"),
+        reference_answer=(
+            "ANSWER: sea-dc1-esx05. Its PSU0 is connected to sea-dc1-pdu03 "
+            "Outlet 1, while PSU1 is not connected at all.\n"
+            "ACCEPTABLE VARIANTS: one of two PSUs cabled.\n"
+            "CONTRADICTIONS: naming sea-dc1-esx01 or sea-dc1-esx02, which have "
+            "both supplies connected; naming a host with neither supply connected, "
+            "such as sea-dc1-esx03 or sea-dc1-esx09; claiming both of esx05's "
+            "supplies are connected."
+        ),
+        category="single-psu-connected",
+        difficulty="advanced", island="hvl", answer_type="value", domain="power",
+        source_query="/api/dcim/power-ports/?device_id=<each hypervisor> -> esx05 has 1 of 2 connected (pdu03 Outlet 1); esx01/02 have 2; others 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "One Halvorsen Logistics cable has lost the equipment on one of its "
+            "two ends, yet the cable record remains in NetBox. Which port is "
+            "attached to the end that survives?"
+        ),
+        expected_entities=("por-br02-sw01", "GigabitEthernet1/0/24"),
+        reference_answer=(
+            "ANSWER: The cable labelled por-br02-ap01 still attaches to "
+            "por-br02-sw01 GigabitEthernet1/0/24. Its other end has no "
+            "termination: the access point was deleted, which removed that side's "
+            "termination but left the cable and the switch port reporting as "
+            "cabled.\n"
+            "ACCEPTABLE VARIANTS: cable 188; half-terminated cable.\n"
+            "CONTRADICTIONS: naming a different port or device; claiming both ends "
+            "are terminated; claiming the cable was deleted."
+        ),
+        category="orphaned-cable",
+        difficulty="advanced", island="hvl", answer_type="value", domain="dcim",
+        source_query="/api/dcim/cables/ scanned for a_terminations or b_terminations empty -> cable 188, a=0 b=1",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many Halvorsen Logistics virtual machines have no primary IP "
+            "address, and which of them is not even assigned to a host device?"
+        ),
+        expected_entities=("hvl-app08", "hvl-backup01", "hvl-test01"),
+        reference_answer=(
+            "ANSWER: Three of the 28 VMs have no primary IP: hvl-app08, "
+            "hvl-backup01 and hvl-test01. Of those, hvl-test01 is also assigned to "
+            "no host device -- it belongs to a cluster only.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a VM that does have a primary IP, such as "
+            "hvl-app01; claiming hvl-app08 has no host, since it runs on "
+            "sea-dc1-esx04."
+        ),
+        category="vms-without-primary-ip",
+        difficulty="advanced", island="hvl", answer_type="count", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> 3 of 28 lack primary_ip; hvl-test01 also has device=null",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which Halvorsen Logistics circuit has a decommissioned status while "
+            "retaining both of its terminations, and which customer site does it "
+            "terminate at?"
+        ),
+        expected_entities=("EV-MPLS-1999", "HVL-SEA-HQ"),
+        reference_answer=(
+            "ANSWER: EV-MPLS-1999. Although decommissioned it retains both "
+            "terminations: the A side at HVL-SEA-HQ and the Z side at the "
+            "Evergreen MPLS Core.\n"
+            "ACCEPTABLE VARIANTS: still terminated; terminations not removed.\n"
+            "CONTRADICTIONS: naming EV-MPLS-2006, which is provisioning rather "
+            "than decommissioned; naming any active circuit; claiming the "
+            "terminations were removed."
+        ),
+        category="decommissioned-circuit-terminated",
+        difficulty="advanced", island="hvl", answer_type="value", domain="circuits",
+        source_query="/api/circuits/circuits/?tenant=hvl -> only EV-MPLS-1999 is decommissioned; its terminations -> HVL-SEA-HQ + Evergreen MPLS Core",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "An active Halvorsen Logistics prefix is nested inside another active "
+            "prefix that is not marked as a container. Name both prefixes and the "
+            "site the outer one covers."
+        ),
+        expected_entities=("10.60.36.128/25", "10.60.36.0/24", "HVL-POR-BR02"),
+        reference_answer=(
+            "ANSWER: The active prefix 10.60.36.128/25 sits inside the active "
+            "prefix 10.60.36.0/24, which is scoped to HVL-POR-BR02. Neither is "
+            "flagged as a container, so the nesting is an inconsistency.\n"
+            "ACCEPTABLE VARIANTS: either order.\n"
+            "CONTRADICTIONS: naming 10.60.3.0/26, which is a different case; "
+            "naming the intentional 192.168.100.0/24 guest duplicates; claiming "
+            "the outer prefix is a container."
+        ),
+        category="nested-active-prefix",
+        difficulty="advanced", island="hvl", answer_type="list", domain="ipam",
+        source_query="/api/ipam/prefixes/ -> 10.60.36.128/25 active, inside active 10.60.36.0/24 (scope HVL-POR-BR02)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "One Halvorsen Logistics IP address carries a mask that disagrees with "
+            "the prefix containing it. Which address is it, which prefix contains "
+            "it, and which device interface holds it?"
+        ),
+        expected_entities=("10.60.3.20/24", "10.60.3.0/26", "sea-dc1-esx01"),
+        reference_answer=(
+            "ANSWER: 10.60.3.20/24, held on interface eno2 of sea-dc1-esx01. It "
+            "falls inside the prefix 10.60.3.0/26, so its /24 mask disagrees with "
+            "the /26 of the containing prefix.\n"
+            "ACCEPTABLE VARIANTS: eno2; mask mismatch.\n"
+            "CONTRADICTIONS: describing it as having no parent prefix, which is a "
+            "different defect affecting 10.61.0.10 and 10.62.0.1; naming a "
+            "different device or prefix."
+        ),
+        category="ip-mask-mismatch",
+        difficulty="advanced", island="hvl", answer_type="value", domain="ipam",
+        source_query="/api/ipam/ip-addresses/?address=10.60.3.20/24 -> on sea-dc1-esx01:eno2; containing prefix 10.60.3.0/26",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Do any Halvorsen Logistics branch sites have a firewall, or are "
+            "firewalls confined to the larger sites? Name the firewalls and where "
+            "they sit."
+        ),
+        expected_entities=("hq-fw01", "sea-dc1-fw01", "sea-dc1-fw02"),
+        reference_answer=(
+            "ANSWER: No branch site has a firewall. All three sit at the two "
+            "larger sites: sea-dc1-fw01 and sea-dc1-fw02 at HVL-SEA-DC1, and "
+            "hq-fw01 at HVL-SEA-HQ.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: placing a firewall at HVL-TAC-BR01, HVL-POR-BR02, "
+            "HVL-SPO-BR03 or HVL-BOI-BR04; naming a device that is not a firewall."
+        ),
+        category="firewall-site-distribution",
+        difficulty="advanced", island="hvl", answer_type="boolean", domain="dcim",
+        source_query="/api/dcim/devices/?tenant=hvl&role=firewall -> 3, at hvl-sea-dc1 (x2) and hvl-sea-hq only",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Is there any Halvorsen Logistics site that has no router assigned to "
+            "it?"
+        ),
+        # Absence item: entity-free by rule -- no stable phrasing for "none".
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: No. Every one of the six Halvorsen Logistics sites has at "
+            "least one router, including the planned site HVL-BOI-BR04, whose "
+            "boi-br04-rtr01 is itself still planned.\n"
+            "ACCEPTABLE VARIANTS: none; every site has a router.\n"
+            "CONTRADICTIONS: naming any site as router-less; claiming HVL-BOI-BR04 "
+            "has no router because it is not yet active."
+        ),
+        category="absence-site-without-router",
+        difficulty="advanced", island="hvl", answer_type="absence", domain="dcim",
+        source_query="/api/dcim/devices/?tenant=hvl&role=router -> 7 routers covering all 6 sites; set difference is empty",
+        # Forbidden entries name OBJECTS, never sentences: a sentence lifted from
+        # the reference leaks by construction.
+        forbidden_entities=("HVL-POR-BR02", "HVL-TAC-BR01", "HVL-SPO-BR03"),
+    ),
+
+    # ---- demo island ----------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Counting every site in the instance regardless of tenant, how many "
+            "hold no devices at all, and which are they?"
+        ),
+        expected_entities=("DM-NYC", "JBB Branch 104"),
+        reference_answer=(
+            "ANSWER: Seven sites hold no devices: DM-NYC and the six Jimbob's "
+            "Banking & Trust branches, JBB Branch 104, 109, 115, 120, 127 and 133.\n"
+            "ACCEPTABLE VARIANTS: any order; seven.\n"
+            "CONTRADICTIONS: naming only DM-NYC and missing the JBB branches; "
+            "naming a site that does hold devices, such as DM-AKRON or NCSU-065."
+        ),
+        category="empty-sites-instance-wide",
+        difficulty="advanced", island="demo", answer_type="count", domain="dcim",
+        source_query="/api/dcim/devices/?site=<slug> across all 30 sites -> 7 with count 0 (dm-nyc + 6 jbb branches)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Across the whole instance, how many devices carry no tenant at all, "
+            "and at which tenants' sites do they sit?"
+        ),
+        expected_entities=("48-Port Patch Panel", "tac-br01-ap01"),
+        reference_answer=(
+            "ANSWER: 15 devices have no tenant. Thirteen are unnamed 48-Port Patch "
+            "Panels, one at each Dunder-Mifflin site that holds equipment. The "
+            "other two sit elsewhere: an unnamed application server at NCSU-065, "
+            "an NC State University site, and tac-br01-ap01, a wireless access "
+            "point at the Halvorsen site HVL-TAC-BR01.\n"
+            "ACCEPTABLE VARIANTS: fifteen; any order.\n"
+            "CONTRADICTIONS: reporting 13 and counting only the Dunder-Mifflin "
+            "panels; describing the NCSU-065 device as a patch panel; omitting "
+            "tac-br01-ap01."
+        ),
+        category="tenantless-instance-wide",
+        difficulty="advanced", island="demo", answer_type="count", domain="tenancy",
+        source_query="/api/dcim/devices/ -> devices with tenant=null: 13 at DM sites + 1 at ncsu-065 (+ tac-br01-ap01 at an HVL site)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which VLAN group has the highest utilization figure recorded in "
+            "NetBox, and is that figure closer to full or nearly empty?"
+        ),
+        expected_entities=("HVL-SEA-DC1 VLANs",),
+        reference_answer=(
+            "ANSWER: The HVL-SEA-DC1 VLANs group, at about 0.15 percent, which is "
+            "nearly empty rather than close to full. The other HVL groups sit "
+            "around 0.12 percent.\n"
+            "ACCEPTABLE VARIANTS: 0.15; effectively empty; negligible utilization.\n"
+            "CONTRADICTIONS: describing the group as full or heavily used; naming "
+            "a group with a lower figure as the highest."
+        ),
+        category="vlan-group-utilization",
+        difficulty="advanced", island="demo", answer_type="value", domain="ipam",
+        source_query="/api/ipam/vlan-groups/ -> utilization: HVL-SEA-DC1 0.15, other HVL groups 0.12",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "NC State University has far more racks than devices. How many of "
+            "each does it have, and what does that imply about the site's build "
+            "state?"
+        ),
+        expected_entities=("NCSU-065",),
+        reference_answer=(
+            "ANSWER: NC State has 29 racks but only 19 devices carrying its "
+            "tenant, almost all of them at NCSU-065. The racks are modelled ahead "
+            "of the equipment, so most stand empty.\n"
+            "ACCEPTABLE VARIANTS: racks provisioned before hardware; mostly empty "
+            "racks.\n"
+            "CONTRADICTIONS: claiming devices outnumber racks; claiming the racks "
+            "are full."
+        ),
+        category="rack-to-device-ratio",
+        difficulty="advanced", island="demo", answer_type="explanation", domain="dcim",
+        source_query="/api/dcim/racks/?tenant=nc-state -> 29; /api/dcim/devices/?tenant=nc-state -> 19",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Comparing the two tenants that own circuits, does Dunder-Mifflin or "
+            "Halvorsen Logistics have more circuits, and how many providers does "
+            "each use?"
+        ),
+        expected_entities=("Cascadia Fiber", "Summit Wireless"),
+        reference_answer=(
+            "ANSWER: Dunder-Mifflin has more, with 26 circuits from 2 providers "
+            "(CenturyLink and Level 3, 13 each). Halvorsen Logistics has 14 "
+            "circuits but spread across 4 providers: Evergreen Networks with 7, "
+            "Cascadia Fiber with 3, Rainier Broadband with 3 and Summit Wireless "
+            "with 1.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: claiming Halvorsen has more circuits; giving either "
+            "tenant the wrong provider count."
+        ),
+        category="cross-tenant-circuit-compare",
+        difficulty="advanced", island="demo", answer_type="count", domain="circuits",
+        source_query="/api/circuits/circuits/?tenant=<t>&provider=<p> -> DM 26 across 2 providers; HVL 14 across 4",
     ),
 )
 
