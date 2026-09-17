@@ -233,6 +233,38 @@ def validate_examples(examples) -> tuple[list[str], list[str]]:
             warns.append(f"{tag}: no source_query recorded -- ground truth is "
                          "not recomputable after a reseed")
 
+    # -- cross-item entity uniqueness ---------------------------------------
+    # MEASURED (45-item set): four separate items were anchored on "DM-NYC"
+    # alone, so ANY answer naming DM-NYC scores entity_coverage 1.0 on all four,
+    # whichever question was actually asked. Substring matching cannot tell them
+    # apart; only correctness_judge can. An item whose entities are ALL present
+    # in another item's ANSWER block needs one entity unique to itself.
+    #
+    # Scored against the ANSWER block only: CONTRADICTIONS deliberately names
+    # the wrong-answer objects, so including it flags almost everything.
+    def _answer_block(ref: str) -> str:
+        kept = []
+        for line in ref.splitlines():
+            if line.startswith(("CONTRADICTIONS:", "ACCEPTABLE VARIANTS:")):
+                break
+            kept.append(line)
+        return _normalize("\n".join(kept))
+
+    blocks = [(e, _answer_block(e.reference_answer)) for e in examples]
+    for i, ex in enumerate(examples):
+        if not ex.expected_entities:
+            continue
+        for other, blk in blocks:
+            if other.question == ex.question:
+                continue
+            if all(_normalize(e) in blk for e in ex.expected_entities):
+                warns.append(
+                    f"[{i}] {ex.question[:50]!r}: every entity also appears in the "
+                    f"ANSWER of {other.category!r} -- entity_coverage cannot "
+                    "distinguish the two. If the pair is NOT a deliberate contrast "
+                    "twin, add an entity unique to this question.")
+                break
+
     return errs, warns
 
 
