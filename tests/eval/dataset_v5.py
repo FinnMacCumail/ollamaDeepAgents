@@ -59,12 +59,14 @@ ISLANDS = ("hvl", "demo")
 
 # Per-tier tool-call budgets. A single global threshold would penalise the
 # advanced tier by construction, since it has a higher floor by design.
-# MEASURED over the 45-item run, per tier: simple median 2.0 (12/15 within),
-# advanced median 9.0 (12/14 within) -- both budgets correct. Medium came in at
-# median 5.0, p75 7, with only 7/15 within the old <=4, so it is raised to the
-# measured p75. The earlier <=4 was set from a 15-item sample whose median was
-# exactly 4.0; the fuller sample says otherwise.
-TOOL_CALL_BUDGET = {"simple": 2, "medium": 7, "advanced": 12}
+# MEASURED over 180 observations (90 items x 2 models, flash and pro):
+#   simple   median 2.0, p75 3  -- only 32/60 within the old <=2, so raised to 3
+#   medium   median 4.0, p75 7  -- 46/60 within <=7, correct, left alone
+#   advanced median 6.0, p75 11 -- 50/60 within <=12, correct, left alone
+# The old simple<=2 came from a 15-item single-model sample. Note the simple
+# tier has a long tail regardless of the budget (single questions costing 21,
+# 17, 14 calls); the median is what the budget tracks, not the outliers.
+TOOL_CALL_BUDGET = {"simple": 3, "medium": 7, "advanced": 12}
 
 
 def _normalize(s: str) -> str:
@@ -1503,10 +1505,12 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "How many power outlets does each Halvorsen Logistics PDU provide, "
             "and how many PDUs are there?"
         ),
-        # "12 PDUs" failed Rule A1 -- the reference said "the 12 Halvorsen PDUs",
-        # so the phrase never appeared literally. Rather than bend the sentence
-        # around a count phrase, the entity is the one durable figure: 96 total.
-        expected_entities=("8 outlets", "96 in total"),
+        # ENTITY-FREE after the two-model run. "8 outlets" and "96 in total"
+        # scored 0.0 on flash and 0.5 on pro despite both answering correctly --
+        # the fourth time a count phrase has failed because a correct answer
+        # words the figure differently. There is no identifier to anchor on here,
+        # so correctness_judge scores it alone.
+        expected_entities=(),
         reference_answer=(
             "ANSWER: All 12 Halvorsen PDUs provide 8 outlets each, which is 96 "
             "in total.\n"
@@ -1716,7 +1720,10 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "serving NC State's racks, which estate has more feeds and how do "
             "their electrical ratings differ?"
         ),
-        expected_entities=("48 feeds",),
+        # ENTITY-FREE: "48 feeds" was missed by BOTH models on correct answers
+        # (they write "48 power feeds"). The question already names NC State and
+        # Halvorsen, so neither can serve as an entity without parroting.
+        expected_entities=(),
         reference_answer=(
             "ANSWER: NC State has far more, with 48 feeds across its racks against "
             "8 at HVL-SEA-DC1. The NC State feeds are rated 20 amps at 220 volts, "
@@ -1734,7 +1741,10 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "NC State University and Jimbob's Banking & Trust are both incomplete "
             "in NetBox, but in opposite ways. Explain what each one is missing."
         ),
-        expected_entities=("29 racks", "24 VLANs"),
+        # ENTITY-FREE: "29 racks" and "24 VLANs" scored 0.5 on flash and 0.0 on
+        # pro. Both tenants are named in the question, so no identifier is
+        # available that would not be earned by parroting.
+        expected_entities=(),
         reference_answer=(
             "ANSWER: NC State has the physical estate but no addressing: 4 sites, "
             "19 devices and 29 racks, yet no prefixes and no VLANs. Jimbob's is the "
