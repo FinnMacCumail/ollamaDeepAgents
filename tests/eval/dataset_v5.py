@@ -473,6 +473,292 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         difficulty="simple", island="demo", answer_type="count", domain="ipam",
         source_query="/api/ipam/vlans/?tenant=dunder-mifflin&vid=100 -> count (13 of 94); tenant=hvl&vid=100 -> 0",
     ),
+
+    # ----------------------------------------------------------------------
+    # BATCH 2 (medium tier, 15 items: 10 HVL / 5 demo).
+    #
+    # Medium = ONE join/hop or ONE aggregation, with two or more filters.
+    # Difficulty is the MECHANISM, never the topic: every item here needs a
+    # second step (resolve an id then filter by it, or aggregate a set), which
+    # is what separates it from the simple tier's single lookup.
+    #
+    # Entities are IDENTIFIERS wherever the data affords one. The v5 smoke run
+    # showed "<number> <noun>" entities break when a correct answer inserts a
+    # qualifier ("13 sites" missed "13 Dunder-Mifflin sites"), and a join
+    # naturally yields NAMES, so the medium tier can avoid that trap almost
+    # everywhere. Where a count genuinely has no nameable anchor, the entity is
+    # a distinctive string the answer must quote (a prefix, a device-type).
+    # ----------------------------------------------------------------------
+
+    # ---- HVL island -----------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which access switches at site HVL-SEA-HQ are in the active state? "
+            "List them by name."
+        ),
+        expected_entities=("hq-acc01", "hq-acc03", "hq-acc04"),
+        reference_answer=(
+            "ANSWER: Three active access switches: hq-acc01, hq-acc03 and hq-acc04.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: including hq-acc02, which is decommissioning, not "
+            "active; naming any other device; omitting one."
+        ),
+        category="site-role-status-list",
+        difficulty="medium", island="hvl", answer_type="list", domain="dcim",
+        source_query="/api/dcim/devices/?site=hvl-sea-hq&role=access-switch&status=active -> 3 (role alone: 23 of 141)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Excluding patch panels and PDUs, which active Halvorsen Logistics "
+            "devices have no primary IP address assigned? List them by name."
+        ),
+        expected_entities=("hq-acc04", "por-br02-sw01", "sea-dc1-leaf04"),
+        reference_answer=(
+            "ANSWER: Three: hq-acc04, por-br02-sw01 and sea-dc1-leaf04.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: including boi-br04-sw01, which is planned rather than "
+            "active; reporting 25, the unfiltered has_primary_ip=false total that "
+            "still counts the 9 patch panels and 12 PDUs which have no IP by design."
+        ),
+        category="no-primary-ip-active",
+        difficulty="medium", island="hvl", answer_type="list", domain="dcim",
+        source_query="/api/dcim/devices/?tenant=hvl&status=active&has_primary_ip=false minus role in (patch-panel,pdu) -> 3",
+    ),
+    BenchmarkExampleV5(
+        # CONTRAST TWIN of the item above: identical but for the status filter.
+        # The minimal pair is the sharpest test of whether the agent applied it.
+        question=(
+            "Excluding patch panels and PDUs, which Halvorsen Logistics devices "
+            "have no primary IP address assigned? Count every status, not just "
+            "active ones, and list them by name."
+        ),
+        expected_entities=("boi-br04-sw01", "hq-acc04", "por-br02-sw01", "sea-dc1-leaf04"),
+        reference_answer=(
+            "ANSWER: Four: boi-br04-sw01, hq-acc04, por-br02-sw01 and sea-dc1-leaf04.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: omitting boi-br04-sw01, which is planned and is the "
+            "only difference from the active-only answer of three; reporting 25, "
+            "which still includes the passive patch panels and PDUs."
+        ),
+        category="no-primary-ip-all-statuses",
+        difficulty="medium", island="hvl", answer_type="list", domain="dcim",
+        source_query="/api/dcim/devices/?tenant=hvl&has_primary_ip=false minus role in (patch-panel,pdu) -> 4",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "At site HVL-SEA-DC1, which rack holds the most mounted devices? "
+            "Name the rack and give its device count."
+        ),
+        expected_entities=("DC1-R01",),
+        reference_answer=(
+            "ANSWER: DC1-R01 holds the most, with 11 mounted devices "
+            "(DC1-R02 has 10, DC1-R03 has 8, DC1-R04 is empty).\n"
+            "ACCEPTABLE VARIANTS: eleven.\n"
+            "CONTRADICTIONS: naming any other rack; naming HQ-MDF-R01, which also "
+            "holds 11 but is at HVL-SEA-HQ and outside the stated scope."
+        ),
+        category="rack-max-occupancy",
+        difficulty="medium", island="hvl", answer_type="value", domain="dcim",
+        source_query="/api/dcim/racks/?site=hvl-sea-dc1 then /api/dcim/devices/?rack_id=<id> -> R01=11 R02=10 R03=8 R04=0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which Halvorsen Logistics circuits are not in the active state? "
+            "Give each circuit ID and its status."
+        ),
+        expected_entities=("EV-MPLS-1999", "EV-MPLS-2006"),
+        reference_answer=(
+            "ANSWER: Two: EV-MPLS-1999 is decommissioned and EV-MPLS-2006 is "
+            "provisioning. The other 12 HVL circuits are active.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming any other circuit; swapping the two statuses; "
+            "claiming all HVL circuits are active."
+        ),
+        category="circuit-status-filter",
+        difficulty="medium", island="hvl", answer_type="list", domain="circuits",
+        source_query="/api/circuits/circuits/?tenant=hvl -> 14, of which 2 are not status=active",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which Halvorsen Logistics hypervisor hosts have no virtual machines "
+            "assigned to them? List them by name."
+        ),
+        expected_entities=("sea-dc1-esx05", "sea-dc1-esx09"),
+        reference_answer=(
+            "ANSWER: Two of the nine hypervisor hosts: sea-dc1-esx05 and "
+            "sea-dc1-esx09.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a host that does carry VMs, such as "
+            "sea-dc1-esx01 or sea-dc1-esx02, which have 6 each; claiming every "
+            "host has VMs."
+        ),
+        category="hosts-without-vms",
+        difficulty="medium", island="hvl", answer_type="list", domain="virt",
+        source_query="/api/dcim/devices/?tenant=hvl&role=hypervisor-host then /api/virtualization/virtual-machines/?device_id=<id> -> 0 for esx05, esx09",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Do the Halvorsen Logistics branch sites have power panels modelled "
+            "in NetBox, or are panels recorded only at the larger sites? Name the "
+            "panels that exist."
+        ),
+        expected_entities=("DC1-PP-A", "DC1-PP-B", "HQ-MDF-PP1"),
+        reference_answer=(
+            "ANSWER: The branch sites have no power panels. All three HVL panels "
+            "sit at the two larger sites: DC1-PP-A and DC1-PP-B at HVL-SEA-DC1, "
+            "and HQ-MDF-PP1 at HVL-SEA-HQ.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: claiming a branch site has a panel; naming a panel "
+            "outside these three."
+        ),
+        category="power-panel-scope",
+        difficulty="medium", island="hvl", answer_type="boolean", domain="power",
+        source_query="/api/dcim/power-panels/ -> 3 at hvl sites; ?site=hvl-<branch> -> 0 for all four branches",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Ignoring wireless access points, which Halvorsen Logistics device is "
+            "not assigned to a rack?"
+        ),
+        expected_entities=("sea-dc1-esx09",),
+        reference_answer=(
+            "ANSWER: sea-dc1-esx09 is the only one. Access points are excluded "
+            "because they are 0U and ceiling-mounted, so being unracked is normal "
+            "for them.\n"
+            "ACCEPTABLE VARIANTS: none.\n"
+            "CONTRADICTIONS: naming an access point such as hq-ap01 or "
+            "spo-br03-ap02; naming a device that does have a rack."
+        ),
+        category="unracked-device",
+        difficulty="medium", island="hvl", answer_type="value", domain="dcim",
+        source_query="/api/dcim/devices/?tenant=hvl with rack=null, minus role=wireless-ap -> sea-dc1-esx09",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "No device at site HVL-BOI-BR04 appears in a list of active Halvorsen "
+            "Logistics devices. Explain why, naming the devices and the states "
+            "involved."
+        ),
+        expected_entities=("boi-br04-rtr01", "boi-br04-sw01"),
+        reference_answer=(
+            "ANSWER: The site holds only boi-br04-rtr01 and boi-br04-sw01, and "
+            "both are status planned rather than active. The site itself is also "
+            "planned, so it is a build that has not gone live.\n"
+            "ACCEPTABLE VARIANTS: not yet deployed; not yet commissioned.\n"
+            "CONTRADICTIONS: describing either device as active, offline or "
+            "decommissioning; claiming the site has no devices at all."
+        ),
+        category="planned-site-explanation",
+        difficulty="medium", island="hvl", answer_type="explanation", domain="dcim",
+        source_query="/api/dcim/devices/?site=hvl-boi-br04 -> 2, both status=planned; site status=planned",
+    ),
+    BenchmarkExampleV5(
+        question="Which IP addresses are assigned inside the VRF named HVL-GUEST?",
+        # Absence item: no expected_entities, because any phrasing of "none" is
+        # fragile. correctness_judge scores it against the reference instead.
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. The HVL-GUEST VRF contains no IP addresses at all. It "
+            "holds only four prefixes, all of them 192.168.100.0/24, duplicated "
+            "once per branch site by design.\n"
+            "ACCEPTABLE VARIANTS: zero; no addresses allocated.\n"
+            "CONTRADICTIONS: naming any specific IP address in this VRF; quoting a "
+            "non-zero address count; calling the duplicate prefixes an error."
+        ),
+        category="absence-vrf-ips",
+        difficulty="medium", island="hvl", answer_type="absence", domain="ipam",
+        source_query="/api/ipam/ip-addresses/?vrf_id=<HVL-GUEST> -> 0; /api/ipam/prefixes/?vrf_id=<HVL-GUEST> -> 4",
+        forbidden_entities=("10.60.", "10.61.", "10.62."),
+    ),
+
+    # ---- demo island ----------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which VRFs contain exactly 30 IP addresses each? List them by name."
+        ),
+        expected_entities=("Alpha", "Bravo", "Charlie", "Delta"),
+        reference_answer=(
+            "ANSWER: Five VRFs hold exactly 30 addresses each: Alpha, Bravo, "
+            "Charlie, Delta and Echo.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming HVL-CORP, which holds 436; naming HVL-GUEST or "
+            "Shared, which hold none; omitting one of the five."
+        ),
+        category="vrf-ip-count-group",
+        difficulty="medium", island="demo", answer_type="list", domain="ipam",
+        source_query="/api/ipam/ip-addresses/?vrf_id=<id> per VRF -> Alpha..Echo = 30 each",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which providers supply circuits to tenant Dunder-Mifflin, Inc., and "
+            "how many does each supply?"
+        ),
+        expected_entities=("CenturyLink", "Level 3"),
+        reference_answer=(
+            "ANSWER: Two providers, evenly split: CenturyLink supplies 13 and "
+            "Level 3 supplies 13, for 26 circuits in total.\n"
+            "ACCEPTABLE VARIANTS: any order; thirteen each.\n"
+            "CONTRADICTIONS: naming a provider that supplies none, such as NTT or "
+            "Comcast; claiming either provider supplies more than the other."
+        ),
+        category="provider-split",
+        difficulty="medium", island="demo", answer_type="list", domain="circuits",
+        source_query="/api/circuits/circuits/?tenant=dunder-mifflin&provider=<slug> -> centurylink 13, level-3 13 (26 total)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Across the whole NetBox instance, changes to which object type are "
+            "recorded most often in the change log?"
+        ),
+        expected_entities=("interface",),
+        reference_answer=(
+            "ANSWER: Interfaces. dcim.interface accounts for 1226 of the 3543 "
+            "change records, well ahead of the next most common, ipam.ipaddress, "
+            "at 438.\n"
+            "ACCEPTABLE VARIANTS: dcim.interface.\n"
+            "CONTRADICTIONS: naming devices, cables, prefixes or IP addresses as "
+            "the most frequently changed type."
+        ),
+        category="changelog-top-type",
+        difficulty="medium", island="demo", answer_type="value", domain="changelog",
+        source_query="/api/core/object-changes/?changed_object_type=<t> -> interface 1226, ipaddress 438, device 198, cable 95",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which sites belonging to tenant Dunder-Mifflin, Inc. have no racks "
+            "defined?"
+        ),
+        expected_entities=("DM-NYC",),
+        reference_answer=(
+            "ANSWER: DM-NYC only. It is the one Dunder-Mifflin site with no racks, "
+            "and it holds no devices either. The other 13 sites have one rack each.\n"
+            "ACCEPTABLE VARIANTS: none.\n"
+            "CONTRADICTIONS: naming any other site; claiming every site has a rack."
+        ),
+        category="sites-without-racks",
+        difficulty="medium", island="demo", answer_type="list", domain="dcim",
+        source_query="/api/dcim/racks/?site=<slug> per DM site -> only dm-nyc has 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many devices sitting at Dunder-Mifflin sites are not assigned to "
+            "any tenant, and what kind of device are they?"
+        ),
+        # Identifier anchor rather than a count phrase: any correct answer must
+        # name the device type.
+        expected_entities=("48-Port Patch Panel",),
+        reference_answer=(
+            "ANSWER: 13 devices, one per site that has equipment. Every one is an "
+            "unnamed 48-Port Patch Panel with no tenant set. 52 devices sit at "
+            "Dunder-Mifflin sites but only 39 carry the tenant.\n"
+            "ACCEPTABLE VARIANTS: thirteen; patch panels.\n"
+            "CONTRADICTIONS: reporting that all devices at these sites carry the "
+            "tenant; naming a router, switch or PDU as the tenantless type."
+        ),
+        category="tenantless-devices",
+        difficulty="medium", island="demo", answer_type="count", domain="tenancy",
+        source_query="/api/dcim/devices/?site=<14 DM slugs> -> 52, of which 13 have tenant=null, all role=patch-panel",
+    ),
 )
 
 
