@@ -1172,6 +1172,292 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         difficulty="advanced", island="demo", answer_type="count", domain="circuits",
         source_query="/api/circuits/circuits/?tenant=<t>&provider=<p> -> DM 26 across 2 providers; HVL 14 across 4",
     ),
+
+    # ----------------------------------------------------------------------
+    # BATCH 4 (15 items, MIXED tiers: 5 simple / 5 medium / 5 advanced).
+    #
+    # Batches 1-3 were one tier each, which let dcim reach 23 of 45 -- ten over
+    # its 90-item share -- while changelog sat at 1 and power at 2. Batch 4 is
+    # mixed so the thin domains land in ALL THREE tiers, which the plan requires,
+    # and contains ZERO dcim items.
+    #   changelog 3, power 3, virt 3, tenancy 2, circuits 2, ipam 2.
+    #
+    # Note "Nakatomi Corportation" is spelled that way in NetBox. The gold
+    # answer uses the instance's spelling, not the corrected one.
+    # ----------------------------------------------------------------------
+
+    # ---- simple ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question="Which power feeds does panel DC1-PP-A supply? List them by name.",
+        expected_entities=("DC1-R01-A", "DC1-R02-A", "DC1-R03-A", "DC1-R04-A"),
+        reference_answer=(
+            "ANSWER: Four feeds: DC1-R01-A, DC1-R02-A, DC1-R03-A and DC1-R04-A.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a feed from the B panel, such as DC1-R01-B; "
+            "omitting one; claiming the panel supplies more than four."
+        ),
+        category="panel-feed-list",
+        difficulty="simple", island="hvl", answer_type="list", domain="power",
+        source_query="/api/dcim/power-feeds/?power_panel_id=<DC1-PP-A> -> 4 of 59",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which virtualization platform does cluster HVL-SEA-HQ-EDGE run on, "
+            "and do the other two Halvorsen Logistics clusters use the same one?"
+        ),
+        expected_entities=("KVM", "VMware"),
+        reference_answer=(
+            "ANSWER: HVL-SEA-HQ-EDGE runs KVM. The other two Halvorsen clusters, "
+            "HVL-SEA-DC1-PROD and HVL-SEA-DC1-MGMT, both run VMware, so it is the "
+            "odd one out.\n"
+            "ACCEPTABLE VARIANTS: none.\n"
+            "CONTRADICTIONS: reporting VMware for HVL-SEA-HQ-EDGE; claiming all "
+            "three clusters share a platform."
+        ),
+        category="cluster-platform",
+        difficulty="simple", island="hvl", answer_type="value", domain="virt",
+        source_query="/api/virtualization/clusters/ -> HVL-SEA-HQ-EDGE type=KVM; PROD and MGMT type=VMware",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "NetBox has two tenant groups. Which one holds the most tenants, and "
+            "how many does it hold?"
+        ),
+        expected_entities=("Customers",),
+        reference_answer=(
+            "ANSWER: The Customers group, with 11 tenants. The other group, "
+            "Enterprise, holds just one.\n"
+            "ACCEPTABLE VARIANTS: eleven.\n"
+            "CONTRADICTIONS: naming Enterprise as the larger group; any other count."
+        ),
+        category="tenant-group-size",
+        difficulty="simple", island="demo", answer_type="value", domain="tenancy",
+        source_query="/api/tenancy/tenants/?group_id=<g> -> Customers 11, Enterprise 1",
+    ),
+    BenchmarkExampleV5(
+        question="Which circuits in NetBox are of the Point-to-point circuit type?",
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None. The Point-to-point type is defined in NetBox but no "
+            "circuit uses it. The other five types are all in use, MPLS most "
+            "heavily with 20 circuits.\n"
+            "ACCEPTABLE VARIANTS: zero; no circuits of that type.\n"
+            "CONTRADICTIONS: naming any specific circuit as point-to-point; "
+            "claiming the type does not exist in NetBox."
+        ),
+        category="absence-circuit-type",
+        difficulty="simple", island="demo", answer_type="absence", domain="circuits",
+        source_query="/api/circuits/circuits/?type=point-to-point -> 0 of 43",
+        forbidden_entities=("EV-MPLS", "CF-DIA", "RB-BB", "SW-LTE"),
+    ),
+    BenchmarkExampleV5(
+        question="How many change-log records does NetBox hold for device hq-acc02?",
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: 4 change records.\n"
+            "ACCEPTABLE VARIANTS: four.\n"
+            "CONTRADICTIONS: any other count; reporting the instance-wide total "
+            "of 3543 records."
+        ),
+        category="device-changelog-count",
+        difficulty="simple", island="hvl", answer_type="count", domain="changelog",
+        source_query="/api/core/object-changes/?changed_object_type=dcim.device&changed_object_id=<hq-acc02> -> 4",
+        recompute_on_reseed=True,
+    ),
+
+    # ---- medium ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which Halvorsen Logistics power feeds are not in the active state, "
+            "and which rack does each serve?"
+        ),
+        expected_entities=("DC1-R04-A", "DC1-R04-B"),
+        reference_answer=(
+            "ANSWER: Two are planned rather than active: DC1-R04-A and DC1-R04-B. "
+            "Both serve rack DC1-R04, which holds no devices.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming an active feed such as DC1-R01-A or HQ-MDF-A; "
+            "claiming every Halvorsen feed is active."
+        ),
+        category="non-active-power-feeds",
+        difficulty="medium", island="hvl", answer_type="list", domain="power",
+        source_query="/api/dcim/power-feeds/?status=planned -> 2 of 59, both on rack DC1-R04",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Are all Halvorsen Logistics virtual machines in the active state? "
+            "Name any that are not, and give each one's status."
+        ),
+        expected_entities=("hvl-fileshare01", "hvl-ntp01"),
+        reference_answer=(
+            "ANSWER: No. Four of the 28 are not active: hvl-backup01 is "
+            "decommissioning, hvl-fileshare01 and hvl-ntp01 are offline, and "
+            "hvl-test01 is planned. The remaining 24 are active.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: claiming every VM is active; giving any named VM the "
+            "wrong status."
+        ),
+        category="vm-status-audit",
+        difficulty="medium", island="hvl", answer_type="boolean", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> 24 active, 2 offline, 1 decommissioning, 1 planned",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many Halvorsen Logistics prefixes have no VLAN associated with "
+            "them?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: 28 of the 42 Halvorsen Logistics prefixes have no VLAN "
+            "associated; the other 14 do.\n"
+            "ACCEPTABLE VARIANTS: twenty-eight.\n"
+            "CONTRADICTIONS: any other split; claiming every prefix carries a VLAN."
+        ),
+        category="prefixes-without-vlan",
+        difficulty="medium", island="hvl", answer_type="count", domain="ipam",
+        source_query="/api/ipam/prefixes/?tenant=hvl -> 42, of which 14 have vlan set",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which change-log action is recorded least often across the instance, "
+            "and how many records does it have?"
+        ),
+        # "delete" is NOT a substring of "deletion" -- after "delet" comes "i",
+        # not "e". The validator caught this as a Rule A1 violation. "deletion"
+        # is present, is absent from the question, and still fails a create/
+        # update answer.
+        expected_entities=("deletion",),
+        reference_answer=(
+            "ANSWER: Deletions are rarest, with 22 records. Creations dominate at "
+            "3158 and updates account for 363, out of 3543 records in total.\n"
+            "ACCEPTABLE VARIANTS: deletion; twenty-two.\n"
+            "CONTRADICTIONS: naming create or update as the rarest action; giving "
+            "deletions a count in the hundreds or thousands."
+        ),
+        category="changelog-rarest-action",
+        difficulty="medium", island="demo", answer_type="value", domain="changelog",
+        source_query="/api/core/object-changes/?action=<a> -> create 3158, update 363, delete 22",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which circuit type is used by the most circuits in NetBox, and how "
+            "many circuits use it?"
+        ),
+        # "MPLS" alone matches inside circuit IDs such as EV-MPLS-1999, so an
+        # answer about individual circuits could score it without naming the
+        # TYPE. The fuller phrase is unambiguous and still present verbatim.
+        expected_entities=("MPLS, with 20 circuits",),
+        reference_answer=(
+            "ANSWER: MPLS, with 20 circuits. Internet Access follows with 15, then "
+            "Dark Fiber with 4, Broadband with 3 and LTE with 1.\n"
+            "ACCEPTABLE VARIANTS: twenty.\n"
+            "CONTRADICTIONS: naming Internet Access or any other type as the most "
+            "used; claiming Point-to-point leads, since no circuit uses it."
+        ),
+        category="circuit-type-leader",
+        difficulty="medium", island="demo", answer_type="value", domain="circuits",
+        source_query="/api/circuits/circuits/?type=<slug> -> mpls 20, internet 15, dark-fiber 4, broadband 3, lte 1, point-to-point 0",
+    ),
+
+    # ---- advanced -------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "The change log holds 22 deletion records. What single event do they "
+            "describe, and which device was removed?"
+        ),
+        expected_entities=("por-br02-ap01",),
+        reference_answer=(
+            "ANSWER: They record one cascading removal: the access point "
+            "por-br02-ap01 was deleted, taking 13 cable terminations, 6 cables, "
+            "one interface and one IP address with it. The device's name survives "
+            "in the deletion record's prechange data.\n"
+            "ACCEPTABLE VARIANTS: cascade delete; one device removal.\n"
+            "CONTRADICTIONS: naming a different device; describing the 22 records "
+            "as unrelated events; claiming the deleted object cannot be identified."
+        ),
+        category="deletion-cascade",
+        difficulty="advanced", island="hvl", answer_type="explanation", domain="changelog",
+        source_query="/api/core/object-changes/?action=delete -> 22: cabletermination 13, cable 6, device 1, interface 1, ipaddress 1; prechange_data.name = por-br02-ap01",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "The power feeds at HVL-SEA-DC1 and those at HVL-SEA-HQ are "
+            "provisioned to different electrical specifications. Describe the "
+            "difference and what it reflects about the two sites."
+        ),
+        expected_entities=("HQ-MDF-PP1",),
+        reference_answer=(
+            "ANSWER: The data-centre feeds, from panels DC1-PP-A and DC1-PP-B, run "
+            "30 amps at 208 volts. The campus feeds, from HQ-MDF-PP1, run 20 amps "
+            "at 120 volts. The data centre is provisioned for higher-density "
+            "equipment than the office site.\n"
+            "ACCEPTABLE VARIANTS: higher capacity at the data centre.\n"
+            "CONTRADICTIONS: giving both sites the same rating; reversing which "
+            "site carries the higher amperage or voltage."
+        ),
+        category="power-spec-contrast",
+        difficulty="advanced", island="hvl", answer_type="explanation", domain="power",
+        source_query="/api/dcim/power-feeds/ -> DC1 feeds 30A/208V (8), HQ feeds 20A/120V (3)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "What is the total vCPU count across all Halvorsen Logistics virtual "
+            "machines, and how much of that belongs to the production cluster?"
+        ),
+        expected_entities=("HVL-SEA-DC1-PROD",),
+        reference_answer=(
+            "ANSWER: 108 vCPUs in total. HVL-SEA-DC1-PROD accounts for 90 of them "
+            "across its 22 VMs, HVL-SEA-DC1-MGMT for the remaining 18 across 6 "
+            "VMs, and HVL-SEA-HQ-EDGE for none.\n"
+            "ACCEPTABLE VARIANTS: none.\n"
+            "CONTRADICTIONS: any other total; attributing vCPUs to "
+            "HVL-SEA-HQ-EDGE, which has no virtual machines."
+        ),
+        category="vcpu-aggregation",
+        difficulty="advanced", island="hvl", answer_type="count", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=hvl -> sum(vcpus)=108; PROD 90, MGMT 18, EDGE 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Do all tenants in NetBox have at least one site? Name any that have "
+            "none."
+        ),
+        expected_entities=("Cyberdyne Systems", "Pied Piper", "Umbrella Corporation"),
+        reference_answer=(
+            "ANSWER: No. Eight tenants have no sites: Cyberdyne Systems, Initech, "
+            "Nakatomi Corportation, Pied Piper, Stark Industries, Strickland "
+            "Propane, Umbrella Corporation and Wayne Enterprises. All eight sit in "
+            "the Customers group.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: claiming every tenant has a site; naming a tenant "
+            "that does have sites, such as Dunder-Mifflin or NC State University."
+        ),
+        category="tenants-without-sites",
+        difficulty="advanced", island="demo", answer_type="boolean", domain="tenancy",
+        source_query="/api/dcim/sites/?tenant=<slug> per tenant -> 8 of 12 tenants have 0 sites",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Outside the data-centre VLAN group, do any Halvorsen Logistics VLAN "
+            "groups contain a quarantine VLAN?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: None do. QUARANTINE, VID 999, exists only in the HVL-SEA-DC1 "
+            "VLANs group. The five campus and branch groups each hold the same "
+            "five VLANs -- DATA, VOICE, WIFI, GUEST and MGMT -- and none of them "
+            "is a quarantine VLAN.\n"
+            "ACCEPTABLE VARIANTS: zero; no other group.\n"
+            "CONTRADICTIONS: naming another group as holding a quarantine VLAN; "
+            "claiming no quarantine VLAN exists anywhere."
+        ),
+        category="absence-quarantine-vlan",
+        difficulty="advanced", island="hvl", answer_type="absence", domain="ipam",
+        source_query="/api/ipam/vlans/?group_id=<g> -> VID 999 QUARANTINE only in HVL-SEA-DC1 VLANs; branch groups hold 110/210/310/410/900",
+        forbidden_entities=("HVL-TAC-BR01 VLANs", "HVL-POR-BR02 VLANs", "HVL-SPO-BR03 VLANs"),
+    ),
 )
 
 
