@@ -212,6 +212,15 @@ def validate_examples(examples) -> tuple[list[str], list[str]]:
                             "(timestamps cannot be backdated; use an absolute "
                             "window or object-scoped history)")
 
+            # MEASURED (30-item run): absence items have no stable surface form for
+        # "none". The same model wrote "0 of 39 devices" on one run and "None of
+        # the devices" on the next, so any entity scores 1.0 on one and 0.0 on
+        # the other. Entities on an absence item measure phrasing luck.
+        if ex.answer_type == "absence" and ex.expected_entities:
+            errs.append(f"{tag}: absence item carries expected_entities "
+                        f"{ex.expected_entities!r} -- there is no stable phrasing "
+                        "for 'none'; leave them empty and let correctness_judge score it")
+
         if not ex.source_query.strip():
             warns.append(f"{tag}: no source_query recorded -- ground truth is "
                          "not recomputable after a reseed")
@@ -442,9 +451,15 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Which devices belonging to tenant Dunder-Mifflin, Inc. have a serial "
             "number recorded in NetBox?"
         ),
-        expected_entities=("0 of 39",),
+        # MEASURED: absence items cannot carry entities. Two runs of the SAME
+        # model phrased this differently -- "0 of 39 devices" then "None of the
+        # devices ... Every one of the 39" -- and no single substring matches
+        # both. An earlier "0 of 39" repair scored 1.0 on the run it was drawn
+        # from and 0.0 on the next: overfitting to one sample. Scored by
+        # correctness_judge instead, like the other absence items.
+        expected_entities=(),
         reference_answer=(
-            "ANSWER: 0 of 39 Dunder-Mifflin devices have a serial number "
+            "ANSWER: None of the 39 Dunder-Mifflin devices has a serial number "
             "recorded; the serial field is empty on every one.\n"
             "ACCEPTABLE VARIANTS: zero; no devices.\n"
             "CONTRADICTIONS: naming any specific device as having a serial; quoting "
@@ -676,7 +691,11 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         question=(
             "Which VRFs contain exactly 30 IP addresses each? List them by name."
         ),
-        expected_entities=("Alpha", "Bravo", "Charlie", "Delta"),
+        # Echo IS a correct member. It was omitted from the entity list only to
+        # dodge a short-string warning, and the judge then marked a complete
+        # answer down for "incorrectly including Echo". Listing all five keeps
+        # the entities and the reference in agreement.
+        expected_entities=("Alpha", "Bravo", "Charlie", "Delta", "Echo"),
         reference_answer=(
             "ANSWER: Five VRFs hold exactly 30 addresses each: Alpha, Bravo, "
             "Charlie, Delta and Echo.\n"
@@ -706,22 +725,34 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         source_query="/api/circuits/circuits/?tenant=dunder-mifflin&provider=<slug> -> centurylink 13, level-3 13 (26 total)",
     ),
     BenchmarkExampleV5(
+        # BOUNDED deliberately. The unbounded form ("which object type is changed
+        # most often?") cost 29 tool calls: NetBox has no group-by endpoint and
+        # 16+ distinct types appear in the log, so a correct answer must probe
+        # EVERY type one at a time. That measures the API's shape, not the agent.
+        # Naming four candidates makes it a 4-call comparison with the same
+        # answer. See the authoring plan's rule on bounding list answers.
         question=(
-            "Across the whole NetBox instance, changes to which object type are "
-            "recorded most often in the change log?"
+            "In the NetBox change log, compare these four object types -- "
+            "interfaces, IP addresses, devices and cables. Which of the four has "
+            "the most change records, and roughly how many?"
         ),
-        expected_entities=("interface",),
+        # Identifier anchor, not the bare figure: "1226" is a bare number (it
+        # matches inside unrelated digits) and "1226 change records" is a
+        # fragile count phrase. Any correct comparison of the four named types
+        # must say which one leads, so the type name is the stable string.
+        expected_entities=("dcim.interface",),
         reference_answer=(
-            "ANSWER: Interfaces. dcim.interface accounts for 1226 of the 3543 "
-            "change records, well ahead of the next most common, ipam.ipaddress, "
-            "at 438.\n"
-            "ACCEPTABLE VARIANTS: dcim.interface.\n"
-            "CONTRADICTIONS: naming devices, cables, prefixes or IP addresses as "
-            "the most frequently changed type."
+            "ANSWER: Interfaces (dcim.interface) lead by a wide margin, with 1226 "
+            "change records. "
+            "IP addresses follow at 438, devices at 198 and cables at 95, out of "
+            "3543 records in total.\n"
+            "ACCEPTABLE VARIANTS: dcim.interface; about 1200.\n"
+            "CONTRADICTIONS: naming IP addresses, devices or cables as the leader; "
+            "giving interfaces a count below that of any other listed type."
         ),
         category="changelog-top-type",
         difficulty="medium", island="demo", answer_type="value", domain="changelog",
-        source_query="/api/core/object-changes/?changed_object_type=<t> -> interface 1226, ipaddress 438, device 198, cable 95",
+        source_query="/api/core/object-changes/?changed_object_type=<t> for the 4 named types -> interface 1226, ipaddress 438, device 198, cable 95",
     ),
     BenchmarkExampleV5(
         question=(
