@@ -1458,6 +1458,307 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         source_query="/api/ipam/vlans/?group_id=<g> -> VID 999 QUARANTINE only in HVL-SEA-DC1 VLANs; branch groups hold 110/210/310/410/900",
         forbidden_entities=("HVL-TAC-BR01 VLANs", "HVL-POR-BR02 VLANs", "HVL-SPO-BR03 VLANs"),
     ),
+
+    # ----------------------------------------------------------------------
+    # BATCH 5 (15 items, mixed tiers 5/5/5), weighted to the thin domains:
+    # power 4, dcim 4, changelog 3, tenancy 2, virt 1, ipam 1.
+    #
+    # NOTE, honestly: this batch was PLANNED as zero-dcim, and it is not. Rack
+    # reservations and platforms are dcim objects and there is no better bucket
+    # for them, so dcim goes 23 -> 27 against a 12.9 even share. That was a
+    # deliberate trade -- reservations and platforms were the richest unmined
+    # material left -- but it means batch 6 must be strictly zero dcim and load
+    # circuits, virt and tenancy, which remain at 7 apiece.
+    #
+    # Two candidate items were DROPPED after probing rather than authored wrong:
+    #   - "which device has the most change records" has NO unique maximum:
+    #     spo-br03-ap02, sea-dc1-esx04/06/07/08/09 all tie at 4. The circuit
+    #     version below does have a unique max (EV-MPLS-2004 at 5, next 4).
+    #   - virtual chassis and device bays are unusable: every member device and
+    #     the Lenovo Flex chassis have name=None, so no question about them is
+    #     answerable by name -- the same trap as the unnamed dm-scranton panel.
+    # ----------------------------------------------------------------------
+
+    # ---- simple ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which user account is recorded as having made the change-log "
+            "entries in this NetBox instance?"
+        ),
+        expected_entities=("seeder",),
+        reference_answer=(
+            "ANSWER: A single account, seeder, is recorded against all 3543 "
+            "change-log entries. No other user appears in the log.\n"
+            "ACCEPTABLE VARIANTS: only one user.\n"
+            "CONTRADICTIONS: naming more than one user; naming alice or bob, who "
+            "appear on rack reservations but not in the change log."
+        ),
+        category="changelog-user",
+        difficulty="simple", island="demo", answer_type="value", domain="changelog",
+        source_query="/api/core/object-changes/ -> user_name is 'seeder' on all 3543",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many power outlets does each Halvorsen Logistics PDU provide, "
+            "and how many PDUs are there?"
+        ),
+        # "12 PDUs" failed Rule A1 -- the reference said "the 12 Halvorsen PDUs",
+        # so the phrase never appeared literally. Rather than bend the sentence
+        # around a count phrase, the entity is the one durable figure: 96 total.
+        expected_entities=("8 outlets", "96 in total"),
+        reference_answer=(
+            "ANSWER: All 12 Halvorsen PDUs provide 8 outlets each, which is 96 "
+            "in total.\n"
+            "ACCEPTABLE VARIANTS: eight each; twelve PDUs.\n"
+            "CONTRADICTIONS: giving different outlet counts to different PDUs; any "
+            "other PDU count."
+        ),
+        category="pdu-outlet-count",
+        difficulty="simple", island="hvl", answer_type="count", domain="power",
+        source_query="/api/dcim/devices/?tenant=hvl&role=pdu -> 12; /api/dcim/power-outlets/?device_id=<each> -> 8 apiece",
+    ),
+    BenchmarkExampleV5(
+        question="Which device platforms have at least one device assigned to them?",
+        expected_entities=("Cisco IOS", "Ubuntu 22.04"),
+        reference_answer=(
+            "ANSWER: Only two of the seven platforms are in use: Cisco IOS with 13 "
+            "devices and Ubuntu 22.04 with 9. The other five -- PAN-OS 11, RHEL 9, "
+            "Ubuntu Linux 18.04, Ubuntu Linux 20.04 and Windows Server 2022 -- have "
+            "none.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming an unused platform as having devices; claiming "
+            "all seven are in use."
+        ),
+        category="platforms-in-use",
+        difficulty="simple", island="demo", answer_type="list", domain="dcim",
+        source_query="/api/dcim/devices/?platform=<slug> -> cisco-ios 13, ubuntu-22-04 9, other five 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which tenant is the only one in NetBox that owns virtual machines?"
+        ),
+        expected_entities=("only tenant",),
+        reference_answer=(
+            "ANSWER: Halvorsen Logistics is the only tenant that owns virtual "
+            "machines, with 28. Every other tenant, including Dunder-Mifflin and "
+            "NC State University, owns none.\n"
+            "ACCEPTABLE VARIANTS: HVL.\n"
+            "CONTRADICTIONS: naming Dunder-Mifflin or any other tenant as owning "
+            "VMs; claiming several tenants own them."
+        ),
+        category="sole-vm-tenant",
+        difficulty="simple", island="hvl", answer_type="value", domain="virt",
+        source_query="/api/virtualization/virtual-machines/?tenant=<slug> per tenant -> only hvl is non-zero (28)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "How many rack reservations exist in NetBox, and how many of them "
+            "belong to Halvorsen Logistics?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: Four reservations exist, and two of them belong to Halvorsen "
+            "Logistics. The other two carry no tenant.\n"
+            "ACCEPTABLE VARIANTS: 4 and 2.\n"
+            "CONTRADICTIONS: any other total; claiming all four belong to one "
+            "tenant."
+        ),
+        category="rack-reservation-count",
+        difficulty="simple", island="hvl", answer_type="count", domain="dcim",
+        source_query="/api/dcim/rack-reservations/ -> 4 total; ?tenant=hvl -> 2 of 4",
+    ),
+
+    # ---- medium ---------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which Halvorsen Logistics PDUs have any outlet in use, and how many "
+            "outlets are in use on each?"
+        ),
+        expected_entities=("sea-dc1-pdu01", "sea-dc1-pdu02", "sea-dc1-pdu03"),
+        reference_answer=(
+            "ANSWER: Three of the 12. sea-dc1-pdu01 and sea-dc1-pdu02 are fully "
+            "loaded at 8 outlets each, and sea-dc1-pdu03 has a single outlet in "
+            "use, for 17 in total. The other nine PDUs have none.\n"
+            "ACCEPTABLE VARIANTS: any order.\n"
+            "CONTRADICTIONS: naming a PDU outside these three, such as hq-pdu01 or "
+            "tac-br01-pdu01; claiming every PDU carries load."
+        ),
+        category="pdu-load-distribution",
+        difficulty="medium", island="hvl", answer_type="list", domain="power",
+        source_query="/api/dcim/power-outlets/?device_id=<each HVL pdu> -> pdu01 8, pdu02 8, pdu03 1, rest 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "One tenant has VLANs defined but owns no devices, racks or prefixes "
+            "at all. Which tenant is it, and how many VLANs does it have?"
+        ),
+        expected_entities=("Jimbob's Banking & Trust",),
+        reference_answer=(
+            "ANSWER: Jimbob's Banking & Trust. It has 24 VLANs and 6 sites, but no "
+            "devices, no racks and no prefixes.\n"
+            "ACCEPTABLE VARIANTS: twenty-four.\n"
+            "CONTRADICTIONS: naming NC State University, which has racks and "
+            "devices but no VLANs; naming a tenant that owns devices."
+        ),
+        category="vlans-without-infrastructure",
+        difficulty="medium", island="demo", answer_type="value", domain="tenancy",
+        source_query="tenant coverage matrix -> jimbobs-banking-trust: sites 6, vlans 24, devices 0, racks 0, prefixes 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Across the whole change log, which action accounts for the updates "
+            "to devices, and how many device updates are recorded?"
+        ),
+        expected_entities=(),
+        reference_answer=(
+            "ANSWER: 127 of the 363 update records apply to devices, the largest "
+            "share of any object type. Interfaces follow with 98 and circuits with "
+            "28.\n"
+            "ACCEPTABLE VARIANTS: 127 device updates.\n"
+            "CONTRADICTIONS: reporting the 198 total device change records, which "
+            "include creations; naming interfaces as the most-updated type."
+        ),
+        category="device-update-share",
+        difficulty="medium", island="demo", answer_type="count", domain="changelog",
+        source_query="/api/core/object-changes/?action=update -> 363; by type: device 127, interface 98, circuit 28",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Which IP aggregates are registered under RFC 1918, and which "
+            "aggregate is registered under a different RIR?"
+        ),
+        expected_entities=("100.64.0.0/10",),
+        reference_answer=(
+            "ANSWER: Three aggregates sit under RFC 1918 -- 10.0.0.0/8, "
+            "172.16.0.0/12 and 192.168.0.0/16. The fourth, 100.64.0.0/10, is "
+            "registered under RFC 6598 instead.\n"
+            "ACCEPTABLE VARIANTS: any order; carrier-grade NAT range.\n"
+            "CONTRADICTIONS: placing 100.64.0.0/10 under RFC 1918; naming an "
+            "aggregate that does not exist."
+        ),
+        category="aggregate-rir-split",
+        difficulty="medium", island="demo", answer_type="list", domain="ipam",
+        source_query="/api/ipam/aggregates/ -> 4; ?rir=rfc-1918 -> 3 of 4; 100.64.0.0/10 is RFC 6598",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Do any Halvorsen Logistics PDUs draw power from a modelled power "
+            "feed, or is the upstream connection missing?"
+        ),
+        # "no upstream" failed Rule A1 -- the reference said "modelled upstream
+        # connection". "power ports are uncabled" is the substantive claim, is
+        # present verbatim, and cannot be earned by restating the question.
+        expected_entities=("power ports are uncabled",),
+        reference_answer=(
+            "ANSWER: None of the 12 PDUs has a modelled upstream connection. Their "
+            "power ports are uncabled, so no PDU traces back to a power feed even "
+            "at HVL-SEA-DC1, where DC1-PP-A and DC1-PP-B do supply rack feeds.\n"
+            "ACCEPTABLE VARIANTS: the upstream link is not modelled.\n"
+            "CONTRADICTIONS: claiming a PDU is connected to a feed; naming a "
+            "specific feed as supplying a named PDU."
+        ),
+        category="pdu-upstream-gap",
+        difficulty="medium", island="hvl", answer_type="boolean", domain="power",
+        source_query="/api/dcim/power-ports/?device_id=<each HVL pdu> -> no connected_endpoints on any of the 12",
+    ),
+
+    # ---- advanced -------------------------------------------------------
+    BenchmarkExampleV5(
+        question=(
+            "Which single circuit has the most change-log records, how many does "
+            "it have, and what kind of changes are they?"
+        ),
+        expected_entities=("EV-MPLS-2004",),
+        reference_answer=(
+            "ANSWER: EV-MPLS-2004, with 5 records: one creation and four updates. "
+            "The next busiest circuits, EV-MPLS-2001, EV-MPLS-2003 and "
+            "EV-MPLS-2005, have four each.\n"
+            "ACCEPTABLE VARIANTS: five records.\n"
+            "CONTRADICTIONS: naming a different circuit as the most changed; "
+            "describing the records as deletions."
+        ),
+        category="most-changed-circuit",
+        difficulty="advanced", island="hvl", answer_type="value", domain="changelog",
+        source_query="/api/core/object-changes/?changed_object_type=circuits.circuit -> id 37 (EV-MPLS-2004) 5 records: 1 create, 4 update; next-highest 4",
+        recompute_on_reseed=True,
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Two rack reservations block capacity in the Halvorsen data centre. "
+            "Which racks do they cover, how many units does each hold back, and "
+            "why?"
+        ),
+        expected_entities=("GPU expansion",),
+        reference_answer=(
+            "ANSWER: DC1-R02 has 20 units reserved for a GPU expansion in Q1, and "
+            "DC1-R03 has 4 units held as spare capacity for storage growth. Both "
+            "belong to Halvorsen Logistics.\n"
+            "ACCEPTABLE VARIANTS: units 20-39 and 20-23.\n"
+            "CONTRADICTIONS: naming R101 or IDF128, which are reservations on "
+            "other tenants' racks; swapping the two unit counts."
+        ),
+        category="rack-reservation-detail",
+        difficulty="advanced", island="hvl", answer_type="explanation", domain="dcim",
+        source_query="/api/dcim/rack-reservations/?tenant=hvl -> DC1-R02 units 20-39 'GPU expansion (Q1)', DC1-R03 units 20-23 'Spare capacity for storage growth'",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Comparing the power feeds at the Halvorsen data centre with those "
+            "serving NC State's racks, which estate has more feeds and how do "
+            "their electrical ratings differ?"
+        ),
+        expected_entities=("48 feeds",),
+        reference_answer=(
+            "ANSWER: NC State has far more, with 48 feeds across its racks against "
+            "8 at HVL-SEA-DC1. The NC State feeds are rated 20 amps at 220 volts, "
+            "while the Halvorsen data-centre feeds run 30 amps at 208 volts.\n"
+            "ACCEPTABLE VARIANTS: forty-eight.\n"
+            "CONTRADICTIONS: claiming Halvorsen has more feeds; swapping the two "
+            "electrical ratings."
+        ),
+        category="cross-estate-power-compare",
+        difficulty="advanced", island="demo", answer_type="count", domain="power",
+        source_query="/api/dcim/power-feeds/ -> 59 total: 48 on NCSU racks R101-R308 (20A/220V), 8 on DC1 racks (30A/208V), 3 at HQ (20A/120V)",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "NC State University and Jimbob's Banking & Trust are both incomplete "
+            "in NetBox, but in opposite ways. Explain what each one is missing."
+        ),
+        expected_entities=("29 racks", "24 VLANs"),
+        reference_answer=(
+            "ANSWER: NC State has the physical estate but no addressing: 4 sites, "
+            "19 devices and 29 racks, yet no prefixes and no VLANs. Jimbob's is the "
+            "reverse -- 6 sites and 24 VLANs, but no devices, no racks and no "
+            "prefixes.\n"
+            "ACCEPTABLE VARIANTS: either order.\n"
+            "CONTRADICTIONS: giving either tenant objects it does not have; "
+            "claiming both are missing the same thing."
+        ),
+        category="opposite-incompleteness",
+        difficulty="advanced", island="demo", answer_type="explanation", domain="tenancy",
+        source_query="tenant matrix -> nc-state: racks 29 devices 19 prefixes 0 vlans 0; jimbobs: vlans 24 sites 6 devices 0 racks 0 prefixes 0",
+    ),
+    BenchmarkExampleV5(
+        question=(
+            "Outside the Halvorsen data centre, is any rack anywhere in NetBox "
+            "reserved with a note warning that it must not be used?"
+        ),
+        expected_entities=("Damaged",),
+        reference_answer=(
+            "ANSWER: Yes, one. Rack R101 carries a two-unit reservation made by "
+            "the user bob, described as 'Damaged - DO NOT USE'. It has no tenant.\n"
+            "ACCEPTABLE VARIANTS: R101; do not use.\n"
+            "CONTRADICTIONS: naming a Halvorsen rack such as DC1-R02 or DC1-R03, "
+            "whose reservations are for planned expansion rather than damage; "
+            "claiming no such reservation exists."
+        ),
+        category="damaged-rack-reservation",
+        difficulty="advanced", island="demo", answer_type="boolean", domain="dcim",
+        source_query="/api/dcim/rack-reservations/ -> R101 units [20,21] user=bob description='Damaged - DO NOT USE'",
+    ),
 )
 
 
