@@ -1151,12 +1151,18 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         ),
         expected_entities=("48-Port Patch Panel", "tac-br01-ap01"),
         reference_answer=(
+            # WORDING FIX: the NC State site has name='MDF' and slug='ncsu-065'.
+            # An earlier version named only the slug, and the judge marked a model
+            # WRONG for saying "MDF" -- the display name of the same site. Both
+            # identifiers are now given so either is accepted.
             "ANSWER: 15 devices have no tenant. Thirteen are unnamed 48-Port Patch "
             "Panels, one at each Dunder-Mifflin site that holds equipment. The "
-            "other two sit elsewhere: an unnamed application server at NCSU-065, "
-            "an NC State University site, and tac-br01-ap01, a wireless access "
-            "point at the Halvorsen site HVL-TAC-BR01.\n"
-            "ACCEPTABLE VARIANTS: fifteen; any order.\n"
+            "other two sit elsewhere: an unnamed application server at the NC "
+            "State site whose slug is ncsu-065 and whose display name is MDF, and "
+            "tac-br01-ap01, a wireless access point at the Halvorsen site "
+            "HVL-TAC-BR01.\n"
+            "ACCEPTABLE VARIANTS: fifteen; any order; naming that site either as "
+            "NCSU-065 or as MDF.\n"
             "CONTRADICTIONS: reporting 13 and counting only the Dunder-Mifflin "
             "panels; describing the NCSU-065 device as a patch panel; omitting "
             "tac-br01-ap01."
@@ -1440,11 +1446,21 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         ),
         expected_entities=("por-br02-ap01",),
         reference_answer=(
-            "ANSWER: They record one cascading removal: the access point "
-            "por-br02-ap01 was deleted, taking 13 cable terminations, 6 cables, "
-            "one interface and one IP address with it. The device's name survives "
-            "in the deletion record's prechange data.\n"
-            "ACCEPTABLE VARIANTS: cascade delete; one device removal.\n"
+            # WORDING FIX: all three models answered "7 distinct request_ids" and
+            # were LITERALLY CORRECT -- the 22 records do span 7 requests (one
+            # carrying the device + interface + IP, six more clearing cables).
+            # The earlier wording said only "one cascading removal", so the judge
+            # scored three correct answers 0.0/0.0/0.5. One logical cascade,
+            # executed as seven API requests; both readings are now stated.
+            "ANSWER: They record the removal of one device and its dependants: the "
+            "access point por-br02-ap01 was deleted, taking 13 cable terminations, "
+            "6 cables, one interface and one IP address with it. NetBox logged this "
+            "as 7 separate request IDs -- one removing the device with its "
+            "interface and IP, and six more clearing cables -- but they are a "
+            "single logical cascade from that one deletion. The device's name "
+            "survives in the deletion record's prechange data.\n"
+            "ACCEPTABLE VARIANTS: cascade delete; one device removal; 7 request "
+            "IDs; seven API requests.\n"
             "CONTRADICTIONS: naming a different device; describing the 22 records "
             "as unrelated events; claiming the deleted object cannot be identified."
         ),
