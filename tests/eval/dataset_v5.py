@@ -999,10 +999,16 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         # hvl-test01 BOTH have device=None; only hvl-app08 has a host. I had
         # over-read a probe that sampled just three VMs.
         reference_answer=(
+            # VERIFIED against live data via MCP and REST. Note the two properties
+            # are DIFFERENT sets: no-primary-IP = {app08, backup01, test01};
+            # no-host = {backup01, fileshare01, test01}. The question scopes to
+            # "of those", so the answer is the intersection, which is two.
             "ANSWER: Three of the 28 VMs have no primary IP: hvl-app08, "
-            "hvl-backup01 and hvl-test01. Of those, two are also assigned to no "
-            "host device -- hvl-backup01 and hvl-test01 belong to a cluster only. "
-            "hvl-app08 does have a host, sea-dc1-esx04.\n"
+            "hvl-backup01 and hvl-test01. Of those three, two are also assigned "
+            "to no host device -- hvl-backup01 and hvl-test01 belong to a cluster "
+            "only. hvl-app08 does have a host, sea-dc1-esx04. (Separately, "
+            "hvl-fileshare01 also lacks a host but does have a primary IP, so it "
+            "falls outside this question.)\n"
             "ACCEPTABLE VARIANTS: any order.\n"
             "CONTRADICTIONS: naming a VM that does have a primary IP, such as "
             "hvl-app01; claiming hvl-app08 has no host."
