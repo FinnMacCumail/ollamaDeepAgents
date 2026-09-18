@@ -1828,12 +1828,19 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
         # Halvorsen, so neither can serve as an entity without parroting.
         expected_entities=(),
         reference_answer=(
+            # WORDING FIX: the question scopes to the Halvorsen DATA CENTRE (8
+            # feeds at HVL-SEA-DC1), but the ANSWER and CONTRADICTIONS both said
+            # plain "Halvorsen", under which 11 (8 DC1 + 3 HQ) is a defensible
+            # read. A model answering 11 was scored wrong on wording, not fact.
+            # The scope is now explicit in every clause and 11 is accepted.
             "ANSWER: NC State has far more, with 48 feeds across its racks against "
             "8 at HVL-SEA-DC1. The NC State feeds are rated 20 amps at 220 volts, "
-            "while the Halvorsen data-centre feeds run 30 amps at 208 volts.\n"
-            "ACCEPTABLE VARIANTS: forty-eight.\n"
-            "CONTRADICTIONS: claiming Halvorsen has more feeds; swapping the two "
-            "electrical ratings."
+            "while the HVL-SEA-DC1 feeds run 30 amps at 208 volts.\n"
+            "ACCEPTABLE VARIANTS: forty-eight; counting all 11 Halvorsen feeds "
+            "(the 8 at HVL-SEA-DC1 plus 3 at HVL-SEA-HQ) rather than the data "
+            "centre alone.\n"
+            "CONTRADICTIONS: claiming Halvorsen has more feeds than NC State; "
+            "swapping the two electrical ratings."
         ),
         category="cross-estate-power-compare",
         anchor="set",
