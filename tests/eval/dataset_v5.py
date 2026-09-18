@@ -56,6 +56,10 @@ DIFFICULTIES = ("simple", "medium", "advanced")
 ANSWER_TYPES = ("count", "list", "value", "boolean", "explanation", "absence")
 DOMAINS = ("dcim", "ipam", "circuits", "virt", "tenancy", "changelog", "power")
 ISLANDS = ("hvl", "demo")
+# Anchor shape, the axis the ROUTING rule keys on -- independent of
+# `difficulty`, which keys on retrieval MECHANISM. A question can be
+# mechanically simple and still set-anchored.
+ANCHORS = ("single", "set")
 
 # Per-tier tool-call budgets. A single global threshold would penalise the
 # advanced tier by construction, since it has a higher floor by design.
@@ -85,6 +89,7 @@ class BenchmarkExampleV5:
     answer_type: str                     # count|list|value|boolean|explanation|absence
     domain: str                          # dcim|ipam|circuits|virt|tenancy|changelog|power
     source_query: str                    # the API call that produces the answer
+    anchor: str                          # single | set  (routing axis)
     forbidden_entities: tuple[str, ...] = ()   # must NOT appear (absence items)
     recompute_on_reseed: bool = False     # temporal/volatile ground truth
 
@@ -102,6 +107,7 @@ class BenchmarkExampleV5:
             "island": self.island,
             "answer_type": self.answer_type,
             "domain": self.domain,
+            "anchor": self.anchor,
             "forbidden_entities": list(self.forbidden_entities),
         }
 
@@ -111,6 +117,7 @@ class BenchmarkExampleV5:
             "island": self.island,
             "answer_type": self.answer_type,
             "domain": self.domain,
+            "anchor": self.anchor,
             "category": self.category,
             "source_query": self.source_query,
             "recompute_on_reseed": self.recompute_on_reseed,
@@ -155,6 +162,8 @@ def validate_examples(examples) -> tuple[list[str], list[str]]:
             errs.append(f"{tag}: bad domain {ex.domain!r}")
         if ex.island not in ISLANDS:
             errs.append(f"{tag}: bad island {ex.island!r}")
+        if ex.anchor not in ANCHORS:
+            errs.append(f"{tag}: bad anchor {ex.anchor!r}")
 
         # -- uniqueness (rescore_* keys ground truth BY QUESTION STRING) ----
         if ex.question in seen_questions:
@@ -318,6 +327,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "reporting the tenant-wide total of 68."
         ),
         category="site-device-count",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="dcim",
         source_query="/api/dcim/devices/?site=hvl-sea-dc1 -> count (30 of 141)",
     ),
@@ -333,6 +343,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other count; reporting the tenant-wide total of 42."
         ),
         category="site-prefix-count",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="ipam",
         source_query="/api/ipam/prefixes/?site=hvl-sea-hq -> count (6 of 132)",
     ),
@@ -349,6 +360,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "regardless of provider."
         ),
         category="provider-circuit-count",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="circuits",
         source_query="/api/circuits/circuits/?provider=evergreen-networks&tenant=hvl -> count (7 of 43)",
     ),
@@ -362,6 +374,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming more or fewer than four."
         ),
         category="site-rack-list",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="list", domain="dcim",
         source_query="/api/dcim/racks/?site=hvl-sea-dc1 -> names (4 of 52)",
     ),
@@ -377,6 +390,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: omitting one; naming any other device."
         ),
         category="site-device-list",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="list", domain="dcim",
         source_query="/api/dcim/devices/?site=hvl-por-br02 -> names (4 of 141)",
     ),
@@ -389,6 +403,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other serial; stating that no serial is recorded."
         ),
         category="device-serial-lookup",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="value", domain="dcim",
         source_query="/api/dcim/devices/?name=sea-dc1-leaf04 -> serial",
     ),
@@ -401,6 +416,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other rack or unit; claiming the device is unracked."
         ),
         category="device-rack-position",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="value", domain="dcim",
         source_query="/api/dcim/devices/?name=hq-acc04 -> rack.name, position",
     ),
@@ -415,6 +431,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "`?rack=DC1-R04` because it ignores the unknown param."
         ),
         category="rack-occupancy",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="boolean", domain="dcim",
         source_query="/api/dcim/devices/?rack_id=46 -> count (0). NOT ?rack=DC1-R04 (returns 141, unfiltered)",
     ),
@@ -431,6 +448,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: naming any VM as belonging to it; any non-zero count."
         ),
         category="empty-cluster",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="boolean", domain="virt",
         source_query="/api/virtualization/virtual-machines/?cluster_id=33 -> count (0 of 208)",
     ),
@@ -449,6 +467,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "has already been deleted from NetBox."
         ),
         category="lifecycle-status",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="explanation", domain="dcim",
         source_query="/api/dcim/devices/?name=hq-acc02 -> status (decommissioning)",
     ),
@@ -462,6 +481,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other count; counting only sites that have devices."
         ),
         category="tenant-site-count",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="count", domain="tenancy",
         source_query="/api/dcim/sites/?tenant=dunder-mifflin -> count (14 of 30)",
     ),
@@ -475,6 +495,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "panels that sit at Dunder-Mifflin sites but carry no tenant."
         ),
         category="tenant-device-count",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="count", domain="dcim",
         source_query="/api/dcim/devices/?tenant=dunder-mifflin -> count (39 of 141)",
     ),
@@ -490,6 +511,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: naming any other site; claiming every site has devices."
         ),
         category="empty-site",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="list", domain="dcim",
         source_query="per-site /api/dcim/devices/?site=<slug> -> only dm-nyc has count 0",
     ),
@@ -513,6 +535,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "a serial value for a Dunder-Mifflin device."
         ),
         category="absence-serial",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="absence", domain="dcim",
         source_query="/api/dcim/devices/?tenant=dunder-mifflin -> 0 of 39 have serial",
         forbidden_entities=("HVL-SN-", "dmi01-nashua-rtr01", "dmi01-scranton-sw01"),
@@ -532,6 +555,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "does not."
         ),
         category="vlan-vid-count",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="count", domain="ipam",
         source_query="/api/ipam/vlans/?tenant=dunder-mifflin&vid=100 -> count (13 of 94); tenant=hvl&vid=100 -> 0",
     ),
@@ -566,6 +590,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "active; naming any other device; omitting one."
         ),
         category="site-role-status-list",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="dcim",
         source_query="/api/dcim/devices/?site=hvl-sea-hq&role=access-switch&status=active -> 3 (role alone: 23 of 141)",
     ),
@@ -583,6 +608,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "still counts the 9 patch panels and 12 PDUs which have no IP by design."
         ),
         category="no-primary-ip-active",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="dcim",
         source_query="/api/dcim/devices/?tenant=hvl&status=active&has_primary_ip=false minus role in (patch-panel,pdu) -> 3",
     ),
@@ -603,6 +629,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "which still includes the passive patch panels and PDUs."
         ),
         category="no-primary-ip-all-statuses",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="dcim",
         source_query="/api/dcim/devices/?tenant=hvl&has_primary_ip=false minus role in (patch-panel,pdu) -> 4",
     ),
@@ -620,6 +647,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "holds 11 but is at HVL-SEA-HQ and outside the stated scope."
         ),
         category="rack-max-occupancy",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="value", domain="dcim",
         source_query="/api/dcim/racks/?site=hvl-sea-dc1 then /api/dcim/devices/?rack_id=<id> -> R01=11 R02=10 R03=8 R04=0",
     ),
@@ -637,6 +665,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming all HVL circuits are active."
         ),
         category="circuit-status-filter",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="circuits",
         source_query="/api/circuits/circuits/?tenant=hvl -> 14, of which 2 are not status=active",
     ),
@@ -655,6 +684,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "host has VMs."
         ),
         category="hosts-without-vms",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="virt",
         source_query="/api/dcim/devices/?tenant=hvl&role=hypervisor-host then /api/virtualization/virtual-machines/?device_id=<id> -> 0 for esx05, esx09",
     ),
@@ -674,6 +704,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "outside these three."
         ),
         category="power-panel-scope",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="boolean", domain="power",
         source_query="/api/dcim/power-panels/ -> 3 at hvl sites; ?site=hvl-<branch> -> 0 for all four branches",
     ),
@@ -692,6 +723,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "spo-br03-ap02; naming a device that does have a rack."
         ),
         category="unracked-device",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="value", domain="dcim",
         source_query="/api/dcim/devices/?tenant=hvl with rack=null, minus role=wireless-ap -> sea-dc1-esx09",
     ),
@@ -711,6 +743,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "decommissioning; claiming the site has no devices at all."
         ),
         category="planned-site-explanation",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="explanation", domain="dcim",
         source_query="/api/dcim/devices/?site=hvl-boi-br04 -> 2, both status=planned; site status=planned",
     ),
@@ -728,6 +761,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "non-zero address count; calling the duplicate prefixes an error."
         ),
         category="absence-vrf-ips",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="absence", domain="ipam",
         source_query="/api/ipam/ip-addresses/?vrf_id=<HVL-GUEST> -> 0; /api/ipam/prefixes/?vrf_id=<HVL-GUEST> -> 4",
         forbidden_entities=("10.60.", "10.61.", "10.62."),
@@ -751,6 +785,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Shared, which hold none; omitting one of the five."
         ),
         category="vrf-ip-count-group",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="list", domain="ipam",
         source_query="/api/ipam/ip-addresses/?vrf_id=<id> per VRF -> Alpha..Echo = 30 each",
     ),
@@ -768,6 +803,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Comcast; claiming either provider supplies more than the other."
         ),
         category="provider-split",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="list", domain="circuits",
         source_query="/api/circuits/circuits/?tenant=dunder-mifflin&provider=<slug> -> centurylink 13, level-3 13 (26 total)",
     ),
@@ -802,6 +838,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "giving interfaces a count below that of any other listed type."
         ),
         category="changelog-top-type",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="value", domain="changelog",
         source_query="/api/core/object-changes/?changed_object_type=<t> for the 4 named types -> interface 1226, ipaddress 438, device 198, cable 95",
     ),
@@ -818,6 +855,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: naming any other site; claiming every site has a rack."
         ),
         category="sites-without-racks",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="list", domain="dcim",
         source_query="/api/dcim/racks/?site=<slug> per DM site -> only dm-nyc has 0",
     ),
@@ -838,6 +876,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "tenant; naming a router, switch or PDU as the tenantless type."
         ),
         category="tenantless-devices",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="count", domain="tenancy",
         source_query="/api/dcim/devices/?site=<14 DM slugs> -> 52, of which 13 have tenant=null, all role=patch-panel",
     ),
@@ -879,6 +918,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "192.168.100.0/24 guest duplicates, which are not orphans."
         ),
         category="orphan-ip-no-parent-prefix",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="list", domain="ipam",
         source_query="all 132 prefixes grouped by VRF, then every IP tested for containment in its own VRF -> 2 orphans",
     ),
@@ -900,6 +940,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming neither uplink is cabled; blaming a device status."
         ),
         category="broken-cable-path",
+        anchor="single",
         difficulty="advanced", island="hvl", answer_type="explanation", domain="dcim",
         source_query="/api/dcim/interfaces/?device_id=<acc03|acc04> -> Gi1/0/48 reachable=True (hq-dist01:xe-0/0/1) vs reachable=False (no endpoints)",
     ),
@@ -920,6 +961,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "supplies are connected."
         ),
         category="single-psu-connected",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="value", domain="power",
         source_query="/api/dcim/power-ports/?device_id=<each hypervisor> -> esx05 has 1 of 2 connected (pdu03 Outlet 1); esx01/02 have 2; others 0",
     ),
@@ -941,6 +983,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "are terminated; claiming the cable was deleted."
         ),
         category="orphaned-cable",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="value", domain="dcim",
         source_query="/api/dcim/cables/ scanned for a_terminations or b_terminations empty -> cable 188, a=0 b=1",
     ),
@@ -965,6 +1008,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "hvl-app01; claiming hvl-app08 has no host."
         ),
         category="vms-without-primary-ip",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="count", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> 3 of 28 lack primary_ip; hvl-test01 also has device=null",
     ),
@@ -985,6 +1029,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "terminations were removed."
         ),
         category="decommissioned-circuit-terminated",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="value", domain="circuits",
         source_query="/api/circuits/circuits/?tenant=hvl -> only EV-MPLS-1999 is decommissioned; its terminations -> HVL-SEA-HQ + Evergreen MPLS Core",
     ),
@@ -1005,6 +1050,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "the outer prefix is a container."
         ),
         category="nested-active-prefix",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="list", domain="ipam",
         source_query="/api/ipam/prefixes/ -> 10.60.36.128/25 active, inside active 10.60.36.0/24 (scope HVL-POR-BR02)",
     ),
@@ -1025,6 +1071,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "different device or prefix."
         ),
         category="ip-mask-mismatch",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="value", domain="ipam",
         source_query="/api/ipam/ip-addresses/?address=10.60.3.20/24 -> on sea-dc1-esx01:eno2; containing prefix 10.60.3.0/26",
     ),
@@ -1044,6 +1091,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "HVL-SPO-BR03 or HVL-BOI-BR04; naming a device that is not a firewall."
         ),
         category="firewall-site-distribution",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="boolean", domain="dcim",
         source_query="/api/dcim/devices/?tenant=hvl&role=firewall -> 3, at hvl-sea-dc1 (x2) and hvl-sea-hq only",
     ),
@@ -1063,6 +1111,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "has no router because it is not yet active."
         ),
         category="absence-site-without-router",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="absence", domain="dcim",
         source_query="/api/dcim/devices/?tenant=hvl&role=router -> 7 routers covering all 6 sites; set difference is empty",
         # Forbidden entries name OBJECTS, never sentences: a sentence lifted from
@@ -1085,6 +1134,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "naming a site that does hold devices, such as DM-AKRON or NCSU-065."
         ),
         category="empty-sites-instance-wide",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="count", domain="dcim",
         source_query="/api/dcim/devices/?site=<slug> across all 30 sites -> 7 with count 0 (dm-nyc + 6 jbb branches)",
     ),
@@ -1106,6 +1156,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "tac-br01-ap01."
         ),
         category="tenantless-instance-wide",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="count", domain="tenancy",
         source_query="/api/dcim/devices/ -> devices with tenant=null: 13 at DM sites + 1 at ncsu-065 (+ tac-br01-ap01 at an HVL site)",
     ),
@@ -1124,6 +1175,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "a group with a lower figure as the highest."
         ),
         category="vlan-group-utilization",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="value", domain="ipam",
         source_query="/api/ipam/vlan-groups/ -> utilization: HVL-SEA-DC1 0.15, other HVL groups 0.12",
     ),
@@ -1150,6 +1202,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "application server at NCSU-065 that carries no tenant."
         ),
         category="rack-to-device-ratio",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="explanation", domain="dcim",
         source_query="/api/dcim/racks/?tenant=nc-state -> 29; /api/dcim/devices/?tenant=nc-state -> 19",
     ),
@@ -1171,6 +1224,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "tenant the wrong provider count."
         ),
         category="cross-tenant-circuit-compare",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="count", domain="circuits",
         source_query="/api/circuits/circuits/?tenant=<t>&provider=<p> -> DM 26 across 2 providers; HVL 14 across 4",
     ),
@@ -1199,6 +1253,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "omitting one; claiming the panel supplies more than four."
         ),
         category="panel-feed-list",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="list", domain="power",
         source_query="/api/dcim/power-feeds/?power_panel_id=<DC1-PP-A> -> 4 of 59",
     ),
@@ -1217,6 +1272,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "three clusters share a platform."
         ),
         category="cluster-platform",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="value", domain="virt",
         source_query="/api/virtualization/clusters/ -> HVL-SEA-HQ-EDGE type=KVM; PROD and MGMT type=VMware",
     ),
@@ -1233,6 +1289,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: naming Enterprise as the larger group; any other count."
         ),
         category="tenant-group-size",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="value", domain="tenancy",
         source_query="/api/tenancy/tenants/?group_id=<g> -> Customers 11, Enterprise 1",
     ),
@@ -1248,6 +1305,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming the type does not exist in NetBox."
         ),
         category="absence-circuit-type",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="absence", domain="circuits",
         source_query="/api/circuits/circuits/?type=point-to-point -> 0 of 43",
         forbidden_entities=("EV-MPLS", "CF-DIA", "RB-BB", "SW-LTE"),
@@ -1262,6 +1320,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "of 3543 records."
         ),
         category="device-changelog-count",
+        anchor="single",
         difficulty="simple", island="hvl", answer_type="count", domain="changelog",
         source_query="/api/core/object-changes/?changed_object_type=dcim.device&changed_object_id=<hq-acc02> -> 4",
         recompute_on_reseed=True,
@@ -1282,6 +1341,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming every Halvorsen feed is active."
         ),
         category="non-active-power-feeds",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="power",
         source_query="/api/dcim/power-feeds/?status=planned -> 2 of 59, both on rack DC1-R04",
     ),
@@ -1300,6 +1360,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "wrong status."
         ),
         category="vm-status-audit",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="boolean", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> 24 active, 2 offline, 1 decommissioning, 1 planned",
     ),
@@ -1316,6 +1377,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other split; claiming every prefix carries a VLAN."
         ),
         category="prefixes-without-vlan",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="count", domain="ipam",
         source_query="/api/ipam/prefixes/?tenant=hvl -> 42, of which 14 have vlan set",
     ),
@@ -1337,6 +1399,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "deletions a count in the hundreds or thousands."
         ),
         category="changelog-rarest-action",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="value", domain="changelog",
         source_query="/api/core/object-changes/?action=<a> -> create 3158, update 363, delete 22",
         recompute_on_reseed=True,
@@ -1358,6 +1421,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "used; claiming Point-to-point leads, since no circuit uses it."
         ),
         category="circuit-type-leader",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="value", domain="circuits",
         source_query="/api/circuits/circuits/?type=<slug> -> mpls 20, internet 15, dark-fiber 4, broadband 3, lte 1, point-to-point 0",
     ),
@@ -1379,6 +1443,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "as unrelated events; claiming the deleted object cannot be identified."
         ),
         category="deletion-cascade",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="explanation", domain="changelog",
         source_query="/api/core/object-changes/?action=delete -> 22: cabletermination 13, cable 6, device 1, interface 1, ipaddress 1; prechange_data.name = por-br02-ap01",
         recompute_on_reseed=True,
@@ -1400,6 +1465,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "site carries the higher amperage or voltage."
         ),
         category="power-spec-contrast",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="explanation", domain="power",
         source_query="/api/dcim/power-feeds/ -> DC1 feeds 30A/208V (8), HQ feeds 20A/120V (3)",
     ),
@@ -1418,6 +1484,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "HVL-SEA-HQ-EDGE, which has no virtual machines."
         ),
         category="vcpu-aggregation",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="count", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> sum(vcpus)=108; PROD 90, MGMT 18, EDGE 0",
     ),
@@ -1437,6 +1504,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "that does have sites, such as Dunder-Mifflin or NC State University."
         ),
         category="tenants-without-sites",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="boolean", domain="tenancy",
         source_query="/api/dcim/sites/?tenant=<slug> per tenant -> 8 of 12 tenants have 0 sites",
     ),
@@ -1456,6 +1524,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming no quarantine VLAN exists anywhere."
         ),
         category="absence-quarantine-vlan",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="absence", domain="ipam",
         source_query="/api/ipam/vlans/?group_id=<g> -> VID 999 QUARANTINE only in HVL-SEA-DC1 VLANs; branch groups hold 110/210/310/410/900",
         forbidden_entities=("HVL-TAC-BR01 VLANs", "HVL-POR-BR02 VLANs", "HVL-SPO-BR03 VLANs"),
@@ -1496,6 +1565,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "appear on rack reservations but not in the change log."
         ),
         category="changelog-user",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="value", domain="changelog",
         source_query="/api/core/object-changes/ -> user_name is 'seeder' on all 3543",
         recompute_on_reseed=True,
@@ -1519,6 +1589,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "other PDU count."
         ),
         category="pdu-outlet-count",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="power",
         source_query="/api/dcim/devices/?tenant=hvl&role=pdu -> 12; /api/dcim/power-outlets/?device_id=<each> -> 8 apiece",
     ),
@@ -1542,6 +1613,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming all seven platforms carry devices."
         ),
         category="platforms-in-use",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="list", domain="dcim",
         source_query="/api/dcim/devices/?platform=<slug> -> cisco-ios 13, ubuntu-22-04 9, other five 0",
     ),
@@ -1559,6 +1631,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "VMs; claiming several tenants own them."
         ),
         category="sole-vm-tenant",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="value", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=<slug> per tenant -> only hvl is non-zero (28)",
     ),
@@ -1576,6 +1649,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "tenant."
         ),
         category="rack-reservation-count",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="dcim",
         source_query="/api/dcim/rack-reservations/ -> 4 total; ?tenant=hvl -> 2 of 4",
     ),
@@ -1596,6 +1670,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "tac-br01-pdu01; claiming every PDU carries load."
         ),
         category="pdu-load-distribution",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="power",
         source_query="/api/dcim/power-outlets/?device_id=<each HVL pdu> -> pdu01 8, pdu02 8, pdu03 1, rest 0",
     ),
@@ -1613,6 +1688,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "devices but no VLANs; naming a tenant that owns devices."
         ),
         category="vlans-without-infrastructure",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="value", domain="tenancy",
         source_query="tenant coverage matrix -> jimbobs-banking-trust: sites 6, vlans 24, devices 0, racks 0, prefixes 0",
     ),
@@ -1631,6 +1707,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "include creations; naming interfaces as the most-updated type."
         ),
         category="device-update-share",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="count", domain="changelog",
         source_query="/api/core/object-changes/?action=update -> 363; by type: device 127, interface 98, circuit 28",
         recompute_on_reseed=True,
@@ -1650,6 +1727,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "aggregate that does not exist."
         ),
         category="aggregate-rir-split",
+        anchor="set",
         difficulty="medium", island="demo", answer_type="list", domain="ipam",
         source_query="/api/ipam/aggregates/ -> 4; ?rir=rfc-1918 -> 3 of 4; 100.64.0.0/10 is RFC 6598",
     ),
@@ -1671,6 +1749,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "specific feed as supplying a named PDU."
         ),
         category="pdu-upstream-gap",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="boolean", domain="power",
         source_query="/api/dcim/power-ports/?device_id=<each HVL pdu> -> no connected_endpoints on any of the 12",
     ),
@@ -1691,6 +1770,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "describing the records as deletions."
         ),
         category="most-changed-circuit",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="value", domain="changelog",
         source_query="/api/core/object-changes/?changed_object_type=circuits.circuit -> id 37 (EV-MPLS-2004) 5 records: 1 create, 4 update; next-highest 4",
         recompute_on_reseed=True,
@@ -1711,6 +1791,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "other tenants' racks; swapping the two unit counts."
         ),
         category="rack-reservation-detail",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="explanation", domain="dcim",
         source_query="/api/dcim/rack-reservations/?tenant=hvl -> DC1-R02 units 20-39 'GPU expansion (Q1)', DC1-R03 units 20-23 'Spare capacity for storage growth'",
     ),
@@ -1733,6 +1814,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "electrical ratings."
         ),
         category="cross-estate-power-compare",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="count", domain="power",
         source_query="/api/dcim/power-feeds/ -> 59 total: 48 on NCSU racks R101-R308 (20A/220V), 8 on DC1 racks (30A/208V), 3 at HQ (20A/120V)",
     ),
@@ -1755,6 +1837,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming both are missing the same thing."
         ),
         category="opposite-incompleteness",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="explanation", domain="tenancy",
         source_query="tenant matrix -> nc-state: racks 29 devices 19 prefixes 0 vlans 0; jimbobs: vlans 24 sites 6 devices 0 racks 0 prefixes 0",
     ),
@@ -1773,6 +1856,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming no such reservation exists."
         ),
         category="damaged-rack-reservation",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="boolean", domain="dcim",
         source_query="/api/dcim/rack-reservations/ -> R101 units [20,21] user=bob description='Damaged - DO NOT USE'",
     ),
@@ -1810,6 +1894,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "terminations; naming an EV-MPLS circuit as singly terminated."
         ),
         category="single-termination-circuits",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="boolean", domain="circuits",
         source_query="/api/circuits/circuit-terminations/ grouped by circuit -> 7 HVL circuits with 1, the 7 EV-MPLS with 2",
     ),
@@ -1827,6 +1912,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "hvl-app01; claiming every VM has one."
         ),
         category="vms-without-interfaces",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="virt",
         source_query="/api/virtualization/interfaces/?virtual_machine_id=<each> -> 26 across 28 VMs; 2 have none",
     ),
@@ -1844,6 +1930,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "CONTRADICTIONS: any other total; claiming most outlets are in use."
         ),
         category="pdu-outlet-utilisation",
+        anchor="set",
         difficulty="simple", island="hvl", answer_type="count", domain="power",
         source_query="/api/dcim/power-outlets/?device_id=<12 HVL pdus> -> 96 outlets, 17 with connected_endpoints",
     ),
@@ -1862,6 +1949,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "change-log entries."
         ),
         category="absence-other-changelog-users",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="absence", domain="changelog",
         source_query="/api/core/object-changes/ -> user_name 'seeder' on all 3543",
         recompute_on_reseed=True,
@@ -1882,6 +1970,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming the role does not exist in NetBox."
         ),
         category="absence-billing-contacts",
+        anchor="set",
         difficulty="simple", island="demo", answer_type="absence", domain="tenancy",
         source_query="/api/tenancy/contact-assignments/ -> 3 total: Administrative 2, Operational 1, Billing 0",
         forbidden_entities=("Dwight Schrute", "Michael Scott", "Pamela Halpert"),
@@ -1903,6 +1992,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "Cascadia Fiber."
         ),
         category="provider-networks",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="list", domain="circuits",
         source_query="/api/circuits/provider-networks/ -> 2: Evergreen MPLS Core (Evergreen Networks), Level3 MPLS (Level 3)",
     ),
@@ -1921,6 +2011,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "on some of them."
         ),
         category="vms-without-roles",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="boolean", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> role is null on all 28; platform set on all 28",
     ),
@@ -1939,6 +2030,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "contact to a different site."
         ),
         category="site-contacts",
+        anchor="single",
         difficulty="medium", island="demo", answer_type="list", domain="tenancy",
         source_query="/api/tenancy/contact-assignments/ -> all 3 on dcim.site DM-Scranton",
     ),
@@ -1957,6 +2049,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "22 tenantless prefixes belong to Halvorsen."
         ),
         category="absence-tenantless-hvl-prefixes",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="absence", domain="ipam",
         source_query="/api/ipam/prefixes/?tenant=hvl -> 42; tenantless overall 22, none scoped to an HVL site",
         forbidden_entities=("10.60.", "192.168.100.0/24"),
@@ -1975,6 +2068,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "the memory figure of 294912 MB instead."
         ),
         category="vm-disk-aggregate",
+        anchor="set",
         difficulty="medium", island="hvl", answer_type="count", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> sum(disk) = 5939200 MB over 28 VMs",
     ),
@@ -1998,6 +2092,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "the anomaly; claiming every singly-terminated circuit is expected."
         ),
         category="dark-fiber-anomaly",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="explanation", domain="circuits",
         source_query="singly-terminated by type -> Internet Access 15, Broadband 3, LTE 1, Dark Fiber 1 (CF-METRO-1002)",
     ),
@@ -2016,6 +2111,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "claiming the VMs are spread across both cluster types."
         ),
         category="empty-cloud-clusters",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="boolean", domain="virt",
         source_query="/api/virtualization/virtual-machines/?cluster_id=<each> -> 23 gc-* clusters all 0; 9 DO-* clusters 20 each",
     ),
@@ -2033,6 +2129,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "than 12 tenants."
         ),
         category="absence-ungrouped-tenants",
+        anchor="set",
         difficulty="advanced", island="demo", answer_type="absence", domain="tenancy",
         source_query="/api/tenancy/tenants/ -> 12, group set on all: Customers 11, Enterprise 1",
         forbidden_entities=("Cyberdyne Systems", "Initech", "Umbrella Corporation"),
@@ -2053,6 +2150,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "devices were removed."
         ),
         category="sole-device-deletion",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="boolean", domain="changelog",
         source_query="/api/core/object-changes/?action=delete -> 22 records, changed_object_type dcim.device on exactly 1 (prechange name por-br02-ap01)",
         recompute_on_reseed=True,
@@ -2071,6 +2169,7 @@ BENCHMARK_EXAMPLES_V5: tuple[BenchmarkExampleV5, ...] = (
             "PAN-OS 11; giving any platform the wrong VM count."
         ),
         category="vm-platform-split",
+        anchor="set",
         difficulty="advanced", island="hvl", answer_type="list", domain="virt",
         source_query="/api/virtualization/virtual-machines/?tenant=hvl -> platform: Ubuntu 22.04 21, RHEL 9 5, Windows Server 2022 2",
     ),
