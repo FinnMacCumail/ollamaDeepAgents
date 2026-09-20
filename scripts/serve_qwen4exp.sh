@@ -15,6 +15,18 @@
 #                          the model then answers from data it no longer has).
 #                          At 131072 the same 12 scored 11/12 with ZERO context
 #                          failures, peaking at 44,295 tokens.
+#   -b 2048 -ub 2048       3.8x PREFILL (34.0 -> 129.7 tok/s on a 9k prompt;
+#                          2.8x wall clock on the same request). llama.cpp only
+#                          copies CPU-resident expert weights to the GPU once a
+#                          microbatch is big enough to amortise the PCIe
+#                          transfer; the default -ub 512 never reaches that
+#                          threshold, so every microbatch pays full freight.
+#                          With 112 GB of experts in RAM this one threshold
+#                          dominates prefill — and prefill is where this agent
+#                          lives (187,272 prompt tokens vs 21,825 generated in
+#                          a 12-question run). Raises peak VRAM during prefill;
+#                          2048 was verified to fit alongside -c 131072 on
+#                          21 GiB, so do not raise it blindly.
 #
 # KV cache stays f16 — quantised KV (-ctk/-ctv) is unverified on this hybrid
 # Gated-DeltaNet architecture — and lives in SYSTEM RAM via --no-kv-offload.
@@ -24,6 +36,19 @@
 # The cost is real and worth knowing: decode 11.2 -> 7.0 tok/s, and the
 # 12-question run went 82 -> 155 min with 60 -> 88 tool calls. It got slower
 # because it stopped hitting a wall and started finishing the work.
+#
+# MEASURED DEAD END — do NOT add `--spec-type ngram-simple`.
+# It looks made for this workload (the agent constantly echoes device names,
+# IDs and JSON keys back out of tool results) and it is not. Measured on the
+# same 9k prompt: 163 drafts proposed, ZERO accepted, decode 5.0 -> 3.8 tok/s
+# (-24%) because the model pays verification cost for drafts it always
+# rejects. Combined with -ub 2048 it degrades BOTH axes (prefill 129.7 ->
+# 101.4, decode 5.9 -> 3.7). ngram-simple needs an exactly-repeating 12-token
+# run to predict the next 48; a table of DISTINCT device names has almost
+# none. This is not a tuning problem — no --spec-ngram-*-size-n value fixes a
+# 0% acceptance rate. Draft-model speculation is separately impossible here:
+# common/speculative.cpp throws on vocab mismatch, and no qwen4exp-vocab draft
+# model exists (the MTP head PRs #27836/#28243 are still unmerged).
 #
 # Usage:  scripts/serve_qwen4exp.sh [port]        (default 58123)
 set -euo pipefail
@@ -50,4 +75,5 @@ exec "$LLAMA_BIN" \
   -ngl 999 -ncmoe 48 \
   -ot 'per_layer_token_embd=CPU' \
   -c 131072 --no-kv-offload -fa auto --jinja \
+  -b 2048 -ub 2048 \
   --host 127.0.0.1 --port "$PORT"
