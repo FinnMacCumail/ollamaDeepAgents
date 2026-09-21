@@ -13,6 +13,18 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-09-21: Week in Review — v5 Benchmark and Local Frontier Inference](2026-09-21_week-in-review-v5-benchmark-and-local-inference.md)
+**Retrospective (both workstreams delivered):** what the week of 15–21 Sep produced across both repos — and the part not recoverable from any single commit: two published claims that the next run contradicted, and the corrections.
+**Key points:**
+- **43 commits, ~8,110 lines**, six days. An unusually high share of the `fix` work corrects *prior claims*, not code. llama.cpp carries **zero** commits of ours — rebuilt and consumed as a dependency.
+- **The v5 "ceiling" was wrong.** Three closely-matched families inside a 2.7pp band looked saturated (69/90 solved by all three); `qwen3.5:397b` then produced the benchmark's **first significant results** (pro−qwen **+0.117 [+0.038, +0.196]**), moving saturation to 59/90. **Corrected claim:** the set resolves gaps of **~9pp and above**, not the ~3pp between flash/pro/kimi. *Saturation is a property of the models you test, not of the questions.*
+- **A 90/90 factual audit found zero errors — and could not catch the three reference-WORDING defects** that were each penalising a *correct* answer. Re-scoring raised flash 0.911 / kimi 0.928 / pro 0.944, **widening** qwen's gap. An ambiguous reference is more dangerous than a wrong one; nothing in the harness flags it.
+- **A 176B model runs locally.** Qwen3.8-Flash-Next scored **11/12** on a stratified sample — every prior local candidate had failed the *simple* tier. Local capability is no longer the constraint; **cost is** (~15.8 h per full v5 run).
+- **Three measured wins** (`--numa isolate -t 10` +56% decode; `-c 131072 --no-kv-offload` 8/12→11/12 correct; `-b 2048 -ub 2048` 3.8× prefill / 1.23× end-to-end) and **four documented dead ends** (n-gram speculation 0 of 163 drafts accepted; draft-model speculation impossible; prompt caching already ~85% effective; alternative runtimes unusable on this host).
+- **Read-only is now enforced at the credential layer**, not just tool design — the agent had been using a write-enabled superuser token. `POST → HTTP 403` verified.
+- **Process:** the cheap hypothesis ("is the context window too small?") took 20 seconds and made a two-run, ~3-hour detour unnecessary. **A test written from the same misunderstanding as the code cannot catch that misunderstanding.**
+- **Where the narrative lives:** the `docs/traces/` files are pure score tables — every conclusion, timing and the ceiling claim/retraction live in the **commit messages**. `git log` is this project's primary narrative source.
+
 ### [2026-09-16: v5 Question Authoring Plan](2026-09-16_v5-question-authoring-plan.md)
 **Plan (authoring not started):** how to author the ~90 v5 questions so they score *validly* under the four existing evaluators, and so difficulty measures reasoning rather than topic.
 **Key points:**
@@ -154,6 +166,8 @@ Original feature specification and architecture planning:
 
 | Date | Topic | Document |
 |------|-------|----------|
+| 2026-09-21 | Week in review — v5 benchmark & local frontier inference | [2026-09-21_week-in-review-v5-benchmark-and-local-inference.md](2026-09-21_week-in-review-v5-benchmark-and-local-inference.md) |
+| 2026-09-16 | v5 question authoring plan | [2026-09-16_v5-question-authoring-plan.md](2026-09-16_v5-question-authoring-plan.md) |
 | 2026-08-10 | LangChain ecosystem vs NetBox Cloud Platform MCP | [2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md](2026-08-10_langchain-ecosystem-vs-netbox-cloud-platform.md) |
 | 2026-07-20 | NetBox GraphQL read tool (PRP 1) | [2026-07-20_netbox-graphql-read-tool.md](2026-07-20_netbox-graphql-read-tool.md) |
 | 2026-06-15 | QuickJS PTC spikes — decision: defer | [2026-06-03_quickjs-code-interpreter-research.md](2026-06-03_quickjs-code-interpreter-research.md) |
@@ -287,4 +301,4 @@ Currently active documents stay here for easy reference.
 ---
 
 **Maintained by:** Development team
-**Last Updated:** 2026-06-30
+**Last Updated:** 2026-09-21
