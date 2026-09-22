@@ -10,7 +10,7 @@
 #                          weights across the socket interconnect. -t 10 == the
 #                          physical cores of ONE node; -t 20 and -t 40 are worse.
 #   -c 131072              32k is NOT enough. A 12-question stratified run lost
-#   --no-kv-offload        3 of 12 questions to context at -c 32768: two hard
+#                          3 of 12 questions to context at -c 32768: two hard
 #                          overflows and one SILENT truncation (the worse case —
 #                          the model then answers from data it no longer has).
 #                          At 131072 the same 12 scored 11/12 with ZERO context
@@ -29,13 +29,36 @@
 #                          21 GiB, so do not raise it blindly.
 #
 # KV cache stays f16 — quantised KV (-ctk/-ctv) is unverified on this hybrid
-# Gated-DeltaNet architecture — and lives in SYSTEM RAM via --no-kv-offload.
-# The context ceiling was never a VRAM problem: this box has 376 GB of RAM
-# against 21 GB of VRAM, so the scarce resource was not the one under pressure.
+# Gated-DeltaNet architecture — and now lives in VRAM.
 #
-# The cost is real and worth knowing: decode 11.2 -> 7.0 tok/s, and the
-# 12-question run went 82 -> 155 min with 60 -> 88 tool calls. It got slower
-# because it stopped hitting a wall and started finishing the work.
+# WITHDRAWN: `--no-kv-offload` used to be here, justified as "4x context for
+# ~37% decode (11.2 -> 7.0 tok/s)". That trade-off was a FALSE CHOICE and the
+# flag has been removed. It cost roughly half the throughput and bought
+# nothing.
+#
+# Why it fits. This is a HYBRID model: only 12 of 48 layers are full attention
+# (indices 3, 7, 11 ... 47); the other 36 are Gated DeltaNet, whose recurrent
+# state is sized by SEQUENCES, not tokens, so it does not grow with context.
+# Those 12 layers use just 2 KV heads (GQA) at 256 key/value length:
+#     12 layers x 2 heads x (256+256) x 2 B = 24 KiB per token
+#     -c 131072 -> 3.00 GiB attention KV, plus ~0.46 GiB recurrent state
+# Measured by VRAM subtraction: 14.7 -> 17.4 GiB resident, i.e. ~3.1 GiB for
+# both caches, leaving ~3.3 GiB headroom on 21 GiB. No OOM.
+#
+# Measured gain (same three questions, one accumulating thread):
+#     prefill, matched ~8.7k prompt : 89.86 -> 126.42 tok/s   (1.41x)
+#     decode                        : 5.1-7.5 -> ~10.8 tok/s  (~2x)
+#     Q2 wall                       : 171.2 -> 91.6 s         (1.87x)
+#     Q3 wall                       : 665.3 -> 329.4 s        (2.02x)
+# Correctness unchanged; zero truncations.
+#
+# Worth recording that the flag was CORRECT WHEN SET: the failure it addressed
+# was -c 32768 losing 3 of 12 questions. Raising the window fixed that, and
+# nobody re-checked whether the offload was still needed. It wasn't.
+#
+# (A 1.24x REGRESSION on the first question after a restart is a cold-cache
+# artefact, not a cost: that turn paid a full 8,743-token prefill on an empty
+# cache, 81.8 s in one call. Compare warm turns only.)
 #
 # MEASURED DEAD END — do NOT add `--spec-type ngram-simple`.
 # It looks made for this workload (the agent constantly echoes device names,
@@ -74,6 +97,6 @@ exec "$LLAMA_BIN" \
   --numa isolate -t 10 \
   -ngl 999 -ncmoe 48 \
   -ot 'per_layer_token_embd=CPU' \
-  -c 131072 --no-kv-offload -fa auto --jinja \
+  -c 131072 -fa auto --jinja \
   -b 2048 -ub 2048 \
   --host 127.0.0.1 --port "$PORT"
