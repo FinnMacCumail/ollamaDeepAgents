@@ -59,29 +59,61 @@ def create_llamacpp_model(
     # again trigger too late.
     n_ctx = int(os.getenv("LLAMACPP_N_CTX", "131072"))
 
-    # Output budget. This is a SAFETY CEILING, not a target.
+    # Output budget. A harmless ceiling -- NOT the fix for blank answers.
     #
-    # It was 2048, and that silently produced BLANK ANSWERS. Qwen3.8-Flash-Next
-    # emits reasoning_content before visible content, and reasoning counts
-    # against this budget. Reproduced directly against the server: a synthesis
-    # question returned finish_reason="length", completion_tokens=2048,
-    # reasoning 6,533 chars and **0 chars of visible content**. Since the
-    # stream filter in netbox_agent.py only yields AI messages that HAVE
-    # content, the user sees an empty reply -- no error, no warning.
+    # THE PROBLEM. Qwen3.8-Flash-Next emits reasoning_content before visible
+    # content, and reasoning counts against this budget. When it consumes the
+    # whole budget the response carries finish_reason="length" and ZERO visible
+    # content; because netbox_agent.py only yields AI messages that HAVE
+    # content, the user sees an empty reply -- no error, no warning. In a
+    # 10-question accumulating session, 3 of 56 generations stopped exactly at
+    # the cap and the closing "summarise everything" turn returned 0 characters
+    # after 24 minutes.
     #
-    # It is not hypothetical: in a 10-question accumulating session, 3 of 56
-    # generations stopped exactly at the cap, and the closing "summarise
-    # everything" turn returned 0 characters after 24 minutes.
+    # RAISING THIS DOES NOT FIX IT. An earlier commit claimed "8192 leaves room
+    # for ~6k of reasoning plus a full answer". That claim is WITHDRAWN -- a
+    # controlled A/B on the identical prompt disproved it:
     #
-    # 8192 leaves room for ~6k of reasoning plus a full answer. Observed
-    # answers are 38-704 tokens, so the cap should rarely bind; when it does,
-    # the answer survives instead of being crowded out. Note the cost if it
-    # ever IS reached: at the ~1.45 tok/s decode seen at 76k context, 8192
+    #   adversarial prompt @ 2048 -> reasoning  6,707 chars, answer     0 chars
+    #   adversarial prompt @ 8192 -> reasoning 20,304 chars, answer     0 chars
+    #
+    # Reasoning simply expands to fill whatever budget it is given. And on a
+    # REPRESENTATIVE prompt the ceiling is irrelevant either way, because real
+    # queries never approach it:
+    #
+    #   realistic prompt   @ 2048 -> 158 tokens used, answer produced
+    #   realistic prompt   @ 8192 -> 149 tokens used, answer produced
+    #
+    # 8192 is kept only as a bound that cannot crowd out an answer. Cost if it
+    # ever IS reached: at the ~1.45 tok/s decode measured at 76k context, 8192
     # tokens is ~94 minutes, so raise it further only deliberately.
     max_tokens = int(os.getenv("LLAMACPP_MAX_TOKENS", "8192"))
 
+    # THE ACTUAL FIX: cap the reasoning, do not enlarge the output budget.
+    #
+    # Measured on the same adversarial prompt that returned 0 chars, at the
+    # ORIGINAL max_tokens=2048:
+    #
+    #   reasoning_effort="low"            -> reasoning 1,447 chars, answer 5,527 chars
+    #   chat_template_kwargs              -> reasoning     0 chars, answer 6,750 chars
+    #     {"enable_thinking": false}
+    #
+    # Both recover a full answer where none was produced before. "low" is
+    # preferred over disabling thinking outright: this agent does multi-hop
+    # tool selection, where some reasoning is useful. enable_thinking=false
+    # would need extra_body plumbing; reasoning_effort is a first-class
+    # ChatOpenAI parameter.
+    #
+    # Set LLAMACPP_REASONING_EFFORT="" (or "default") to send nothing and let
+    # the server/template decide. Server-side, llama-server also exposes
+    # --reasoning-budget N, which applies to every client rather than just this
+    # one -- see scripts/serve_qwen4exp.sh.
+    _effort = os.getenv("LLAMACPP_REASONING_EFFORT", "low").strip()
+    reasoning_effort = _effort if _effort and _effort != "default" else None
+
     logger.info("Creating llama.cpp model", model=model, base_url=base_url,
-                n_ctx=n_ctx, max_tokens=max_tokens)
+                n_ctx=n_ctx, max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort)
 
     try:
         llm = ChatOpenAI(
@@ -90,6 +122,7 @@ def create_llamacpp_model(
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
             # Standard OpenAI parameters
             top_p=0.95,
             stop=["<|im_end|>", "<|endoftext|>"],  # Common stop tokens for Qwen
