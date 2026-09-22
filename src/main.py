@@ -12,7 +12,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from .agents.netbox_agent import create_netbox_agent
-from .utils.config import load_config
+from .utils.config import load_config, load_netbox_config
 from .utils.logging import setup_logging
 
 # Initialize Rich console for beautiful output
@@ -210,18 +210,58 @@ async def main(args: list | None = None):
     parsed_args = parser.parse_args(args if args is not None else sys.argv[1:])
 
     try:
-        # Load configuration
+        # Load configuration.
+        #
+        # Model selection is BACKEND-AWARE. This previously read
+        # `ollama_config.model` unconditionally, so with LLM_BACKEND=llamacpp
+        # the run was still LABELLED with OLLAMA_MODEL: traces recorded
+        # `deepseek-v4-flash:cloud` while llama.cpp actually served the loaded
+        # GGUF. Answers were correct -- llama.cpp ignores the request's `model`
+        # field and serves whatever is loaded -- but every trace on the
+        # llamacpp backend carried the wrong model name, which would silently
+        # corrupt any comparison against real Ollama runs.
+        #
+        # The llamacpp branch uses load_netbox_config() rather than
+        # load_config(): OllamaConfig validates OLLAMA_MODEL against a prefix
+        # allowlist containing no GGUF pattern, so routing a llama.cpp model
+        # name through it would raise. That helper exists for exactly this
+        # case -- see its docstring in utils/config.py.
         console.print("[cyan]Loading configuration...[/cyan]")
-        ollama_config, netbox_config = load_config()
 
-        # Override model if specified
-        model_name = parsed_args.model or ollama_config.model
+        # Load .env BEFORE reading LLM_BACKEND. Until this call, os.getenv sees
+        # nothing from .env: load_dotenv() previously ran only as a side effect
+        # INSIDE load_config()/load_netbox_config() (utils/config.py), i.e.
+        # after this point. Reading LLM_BACKEND first therefore silently fell
+        # through to the "ollama" default and picked the wrong model even with
+        # LLM_BACKEND=llamacpp set. load_dotenv() is idempotent, so the calls
+        # inside those helpers remain harmless.
+        from dotenv import load_dotenv
 
-        # Create and initialize agent
-        console.print(f"[cyan]Initializing NetBox agent with model {model_name}...[/cyan]")
+        load_dotenv()
+
+        backend = os.getenv("LLM_BACKEND", "ollama")
+
+        if backend == "llamacpp":
+            netbox_config = load_netbox_config()
+            default_model = os.getenv("LLAMACPP_MODEL", "Qwen_Qwen3-14B-Q5_K_M.gguf")
+        else:
+            ollama_config, netbox_config = load_config()
+            default_model = ollama_config.model
+
+        # An explicit --model always wins, on either backend.
+        model_name = parsed_args.model or default_model
+
+        # Create and initialize agent. `backend` is passed explicitly rather
+        # than left to NetBoxDeepAgent's env fallback: that implicit path is
+        # what let the model name and the backend disagree in the first place.
+        console.print(
+            f"[cyan]Initializing NetBox agent with model {model_name} "
+            f"(backend: {backend})...[/cyan]"
+        )
         agent = await create_netbox_agent(
             netbox_config=netbox_config,
             model_name=model_name,
+            backend=backend,
             skills_path=parsed_args.skills_path,
             enable_metrics=not parsed_args.no_metrics,
         )
