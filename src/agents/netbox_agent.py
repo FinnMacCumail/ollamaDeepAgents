@@ -150,6 +150,7 @@ object's own details — its location, its assigned IPs, its tenant — use `net
 though the answer spans the site + IP + tenant models: it is still ONE anchor object.
 Example: "For device dmi01-nashua-rtr01, show location details, assigned IP addresses, and tenant
 ownership" = ONE object → `netbox_get_objects`, NOT `netbox_graphql`.
+<!--GRAPHQL-BLOCK-START-->
 
 ONLY when a read is anchored on a SET of objects that must be filtered/joined across models (e.g.
 "devices at these sites with their region", "circuits per provider and where they terminate") or
@@ -159,6 +160,7 @@ two-step pattern cannot. Load the `netbox-graphql` skill for the grammar and rou
 call `netbox_graphql_schema(<Type>)` first for any type or field you are unsure of (this works
 for ANY NetBox object, not just common ones). `netbox_graphql` is READ-ONLY; never attempt
 mutations.
+<!--GRAPHQL-BLOCK-END-->
 
 ## OUTPUT FORMATTING:
 - Present results as concise markdown tables
@@ -169,6 +171,62 @@ mutations.
 
 Your goal: Provide accurate, efficient answers using minimal tokens while maintaining clarity.
 """
+
+_GRAPHQL_BLOCK_START = "<!--GRAPHQL-BLOCK-START-->"
+_GRAPHQL_BLOCK_END = "<!--GRAPHQL-BLOCK-END-->"
+
+
+def _system_prompt_for(enable_graphql: bool) -> str:
+    """Return the system prompt, with the GraphQL routing block removed when the
+    GraphQL tools are not registered.
+
+    The control arm of a GraphQL-vs-MCP A/B must not be told to reach for a tool
+    it does not have: it would spend turns attempting `netbox_graphql`, and the
+    arm would measure that rather than measuring MCP. Only the block between the
+    markers is dropped — the anchor-count rule above it governs MCP routing and
+    must survive in BOTH arms, or the experiment varies two things at once.
+
+    The markers themselves are always stripped, so the enabled arm's prompt is
+    byte-identical to what every previous run used. If it were not, results
+    would not be comparable against the existing 90-question baseline.
+    """
+    prompt = NETBOX_SYSTEM_PROMPT
+    start = prompt.find(_GRAPHQL_BLOCK_START)
+    end = prompt.find(_GRAPHQL_BLOCK_END)
+    if start == -1 or end == -1:
+        # Markers absent (someone edited the prompt) — fail loud rather than
+        # silently shipping a treatment prompt to the control arm.
+        if not enable_graphql:
+            raise RuntimeError(
+                "ENABLE_GRAPHQL=0 but the GraphQL prompt markers are missing "
+                "from NETBOX_SYSTEM_PROMPT; the control arm would still be "
+                "instructed to use GraphQL. Refusing to build a misleading agent."
+            )
+        return prompt
+    end_full = end + len(_GRAPHQL_BLOCK_END)
+    if enable_graphql:
+        return (prompt[:start] + prompt[start + len(_GRAPHQL_BLOCK_START):end]
+                + prompt[end_full:])
+
+    control = prompt[:start].rstrip() + "\n" + prompt[end_full:]
+    # The retained anchor-count rule names GraphQL by way of contrast ("NOT
+    # GraphQL", "NOT `netbox_graphql`"). Those references must go too: naming a
+    # tool the control agent does not have invites it to hunt for one. Reword
+    # rather than delete — the RULE itself has to be identical in both arms, or
+    # the experiment varies MCP routing as well as tool availability.
+    control = (control
+               .replace("## TOOL ROUTING — MCP by default; GraphQL for cross-model sets:",
+                        "## TOOL ROUTING — count the anchor objects:")
+               .replace("(two-step: resolve the object by name, then read its related IDs), NOT GraphQL. This holds even",
+                        "(two-step: resolve the object by name, then read its related IDs). This holds even")
+               .replace("ownership\" = ONE object → `netbox_get_objects`, NOT `netbox_graphql`.",
+                        "ownership\" = ONE object → `netbox_get_objects`, resolved in two steps."))
+    if "graphql" in control.lower():
+        raise RuntimeError(
+            "ENABLE_GRAPHQL=0 but the control prompt still references GraphQL: "
+            + repr([ln for ln in control.splitlines() if "graphql" in ln.lower()])
+        )
+    return control
 
 
 class NetBoxDeepAgent:
@@ -200,6 +258,11 @@ class NetBoxDeepAgent:
         self.netbox_config = netbox_config
         self.model_name = model_name
         self.skills_path = skills_path
+        # A/B switch for the GraphQL read path. Default ON — setting this to
+        # "0"/"false" is only for measuring the GraphQL tools against MCP-only
+        # on identical items. See the tool-registration block in initialize().
+        self.enable_graphql = os.getenv("ENABLE_GRAPHQL", "1").strip().lower() \
+            not in ("0", "false", "no")
         self.enable_metrics = enable_metrics
         self.backend = backend or os.getenv("LLM_BACKEND", "ollama")
         self.metrics = QueryMetrics() if enable_metrics else None
@@ -277,8 +340,22 @@ class NetBoxDeepAgent:
         # Append the standalone read-only GraphQL tools (netbox_graphql +
         # netbox_graphql_schema). These are NOT wrapped by NetBoxToolWrapper, so
         # they bypass FilterValidator by design — GraphQL has its own grammar.
-        tools.extend(build_graphql_tools(self.netbox_config))
-        print(f"DEBUG: Total {len(tools)} tools (incl. GraphQL)", flush=True)
+        #
+        # ENABLE_GRAPHQL=0 removes them, for A/B measurement of the GraphQL path
+        # against MCP-only on the same items. Default is ON: existing behaviour
+        # is unchanged unless the variable is explicitly set.
+        #
+        # Disabling the tools is NOT sufficient on its own. The control arm must
+        # also drop the prompt block that tells the model to prefer GraphQL (see
+        # NETBOX_SYSTEM_PROMPT) and the netbox-graphql skill — otherwise the
+        # agent spends turns reaching for a tool it does not have, and the arm
+        # measures that instead of measuring MCP.
+        if self.enable_graphql:
+            tools.extend(build_graphql_tools(self.netbox_config))
+            print(f"DEBUG: Total {len(tools)} tools (incl. GraphQL)", flush=True)
+        else:
+            print(f"DEBUG: Total {len(tools)} tools (GraphQL DISABLED "
+                  f"via ENABLE_GRAPHQL=0)", flush=True)
 
         # Create LLM model based on backend
         print(f"DEBUG: Creating {self.backend} model...", flush=True)
@@ -326,7 +403,7 @@ class NetBoxDeepAgent:
         self.agent = create_deep_agent(
             model=model,
             tools=tools,
-            system_prompt=NETBOX_SYSTEM_PROMPT,
+            system_prompt=_system_prompt_for(self.enable_graphql),
             middleware=middleware,
             # DeepAgents expects skills as list[str]; a bare string iterates char-by-char
             # and silently loads zero skills.
