@@ -33,6 +33,12 @@ dev = [
     "types-requests",
     "ipython>=8.15.0",
 ]
+# Web chat (python -m src.web). Kept out of the runtime deps so CLI/eval users don't pull FastAPI.
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "websockets>=13",
+]
 
 [build-system]
 requires = ["setuptools>=68.0.0", "wheel"]
