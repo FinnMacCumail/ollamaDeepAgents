@@ -37,6 +37,13 @@ llama.cpp backend (see `docs/setup/llamacpp.md`) is the data-never-leaves-the-bo
 ollamaDeepAgents/
 ├── src/
 │   ├── main.py                       # CLI entry point (python -m src.main)
+│   ├── web/                          # Web chat backend (python -m src.web): FastAPI + WebSocket
+│   │   ├── api.py                    # routes: /health /status /models /conversations/* /ws/chat
+│   │   ├── session.py                # TurnRunner: one turn at a time, queue, cancel, usage ledger
+│   │   ├── events.py                 # LangGraph stream -> wire chunks (text, tool_*, usage, done)
+│   │   ├── models.py                 # StreamChunk / ClientMessage / CallUsage / TurnUsage
+│   │   ├── config.py                 # WebConfig (ports, CORS); load_dotenv() first
+│   │   └── llama_status.py           # llama-server /health + /slots probe
 │   ├── agents/
 │   │   ├── netbox_agent.py           # Core agent factory + HarnessProfile (Workaround B)
 │   │   ├── ollama_config.py          # ChatOllama setup (local + :cloud)
@@ -65,6 +72,7 @@ ollamaDeepAgents/
 │   ├── manual/                       # Manual test scripts
 │   └── data/
 ├── docs/                            # development/, setup/, guides/, reference/, traces/, posts/
+├── frontend/                        # Nuxt 3 chat UI (npm run dev -> :3010); talks to src/web on :8010
 └── examples/                        # basic_usage.py, failed_query_recovery.py
 ```
 
@@ -157,6 +165,11 @@ harness so it can test arbitrary models without tripping the validator).
 
 # Override model without editing .env
 ./venv/bin/python -m src.main --model deepseek-v4-flash:cloud
+
+# Web chat (backend :8010, then frontend :3010) — see docs/setup/web-chat.md
+./venv/bin/python -m src.web
+cd frontend && npm run dev
+./venv/bin/python scripts/ws_smoke.py "What sites do I have?" --usage   # protocol check, no browser
 
 # Model-matrix evaluation (LangSmith)
 ./venv/bin/python -m tests.eval.run_matrix

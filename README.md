@@ -128,6 +128,20 @@ async def main():
 asyncio.run(main())
 ```
 
+### Web Chat
+
+A browser front end over the same agent, with token-level streaming, tool-call display,
+cancel, per-conversation memory, and a live context gauge / token ledger fed by llama-server's
+own `usage` and `timings`.
+
+```bash
+./venv/bin/pip install -e ".[web]"
+./venv/bin/python -m src.web                # backend on http://127.0.0.1:8010
+cd frontend && npm install && npm run dev   # UI on http://localhost:3010
+```
+
+Full run book, ports and troubleshooting: [docs/setup/web-chat.md](docs/setup/web-chat.md).
+
 ## 🔧 How It Works
 
 ### MCP Filter Constraints

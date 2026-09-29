@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 
 from deepagents import HarnessProfile, create_deep_agent, register_harness_profile
 from deepagents.backends.filesystem import FilesystemBackend
@@ -171,6 +172,21 @@ mutations.
 
 Your goal: Provide accurate, efficient answers using minimal tokens while maintaining clarity.
 """
+
+def _content_text(content: Any) -> str:
+    """Flatten a LangChain message content (str or list of blocks) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return "".join(parts)
+    return str(content) if content else ""
+
 
 _GRAPHQL_BLOCK_START = "<!--GRAPHQL-BLOCK-START-->"
 _GRAPHQL_BLOCK_END = "<!--GRAPHQL-BLOCK-END-->"
@@ -500,6 +516,81 @@ class NetBoxDeepAgent:
             if self.metrics:
                 self.metrics.total_queries += 1
                 self.metrics.response_times.append(time.time() - start_time)
+
+    async def stream_events(
+        self, user_query: str, thread_id: str, run_id: str | None = None
+    ) -> AsyncGenerator[tuple[str, Any], None]:
+        """
+        Execute a query and yield raw LangGraph stream events for the web layer.
+
+        Unlike query(), this uses stream_mode=["messages", "updates"] so callers get
+        token deltas (AIMessageChunk), tool calls and tool results as they happen.
+        Each item is a (mode, payload) tuple exactly as LangGraph yields it; translation
+        into wire chunks lives in src/web/events.py. query() is deliberately untouched:
+        the CLI and the eval harness depend on its filtering.
+
+        Args:
+            user_query: Natural language query from user
+            thread_id: Conversation thread (the web layer uses the conversation id)
+            run_id: Optional UUID for the LangGraph root run, so the caller can link
+                to the LangSmith trace of this turn
+
+        Yields:
+            (mode, payload) tuples from agent.astream()
+        """
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+
+        logger.info("Processing query (web)", query=user_query[:100], thread_id=thread_id[:8])
+        start_time = time.time()
+
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        if run_id:
+            config["run_id"] = run_id
+
+        try:
+            async for mode, payload in self.agent.astream(
+                {"messages": [{"role": "user", "content": user_query}]},
+                config=config,
+                stream_mode=["messages", "updates"],
+            ):
+                yield mode, payload
+
+            if self.metrics:
+                self.metrics.successful_queries += 1
+
+        except Exception as e:
+            logger.error("Query failed (web)", error=str(e), query=user_query[:100])
+            if self.metrics and ("Invalid filter" in str(e) or "MCP Filter Error" in str(e)):
+                self.metrics.filter_errors += 1
+            raise
+
+        finally:
+            if self.metrics:
+                self.metrics.total_queries += 1
+                self.metrics.response_times.append(time.time() - start_time)
+
+    async def get_history(self, thread_id: str) -> list[dict[str, str]]:
+        """Return the user/assistant transcript of a thread from the checkpointer.
+
+        Tool calls, tool results and empty AI messages are omitted, mirroring what
+        query() would have shown the user.
+        """
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+
+        state = await self.agent.aget_state({"configurable": {"thread_id": thread_id}})
+        messages = state.values.get("messages", []) if state and state.values else []
+        history: list[dict[str, str]] = []
+        for m in messages:
+            mtype = getattr(m, "type", None)
+            if mtype == "human":
+                history.append({"role": "user", "content": _content_text(m.content)})
+            elif mtype == "ai" and m.content and not getattr(m, "tool_calls", None):
+                text = _content_text(m.content)
+                if text:
+                    history.append({"role": "assistant", "content": text})
+        return history
 
     async def query_sync(self, user_query: str, thread_id: str | None = None) -> str:
         """

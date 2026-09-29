@@ -1,0 +1,93 @@
+/* Custom styles for Netbox Chatbox */
+
+/* Ensure full height layout */
+html, body, #__nuxt {
+  @apply h-full;
+}
+
+/* Shared header height: .sidebar-header and .chat-header must stay level. */
+:root {
+  --app-header-h: 4.5rem; /* 72px */
+}
+
+/* Chat container */
+.chat-container {
+  @apply h-screen flex flex-col bg-white dark:bg-gray-900;
+}
+
+/* Chat header */
+.chat-header {
+  @apply px-6 py-4 bg-white dark:bg-gray-800;
+  @apply border-b border-gray-200 dark:border-gray-700 shadow-sm;
+}
+
+.chat-title {
+  @apply text-xl font-semibold text-gray-900 dark:text-gray-100;
+}
+
+.chat-subtitle {
+  @apply text-sm text-gray-600 dark:text-gray-400;
+}
+
+/* Chat main area */
+.chat-main {
+  @apply flex-1 flex flex-col min-h-0;
+}
+
+/* Chat messages */
+.chat-message {
+  @apply mb-4 p-4 rounded-lg;
+}
+
+.user-message {
+  @apply bg-blue-50 dark:bg-blue-900/20 ml-8;
+}
+
+.assistant-message {
+  @apply bg-gray-50 dark:bg-gray-800/50 mr-8;
+}
+
+/* Custom scrollbar */
+.chat-history::-webkit-scrollbar {
+  @apply w-2;
+}
+
+.chat-history::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-800;
+}
+
+.chat-history::-webkit-scrollbar-thumb {
+  @apply bg-gray-400 dark:bg-gray-600 rounded-full;
+}
+
+.chat-history::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500 dark:bg-gray-500;
+}
+
+/* Loading animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.loading-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Connection status pulse */
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.status-pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}

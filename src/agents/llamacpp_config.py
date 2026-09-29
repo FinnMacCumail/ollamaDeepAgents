@@ -1,12 +1,37 @@
 """Llama.cpp model configuration and initialization for DeepAgents."""
 
 import os
+from typing import Any
 
 from langchain_openai import ChatOpenAI
 
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class LlamaCppChatOpenAI(ChatOpenAI):
+    """ChatOpenAI that keeps llama.cpp's `timings` block.
+
+    llama-server appends a non-OpenAI `timings` object (prompt_n, prompt_per_second,
+    predicted_per_second, ...) to the final streamed chunk of every call, the same chunk
+    that carries `usage`. The base class drops unknown fields; this override copies it into
+    `response_metadata["timings"]` so callers get real prefill/decode tok/s instead of
+    wall-clock guesses. Purely additive: everything else is the base behaviour.
+    """
+
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> Any:
+        gen = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        if gen is not None and isinstance(chunk, dict) and chunk.get("timings"):
+            gen.message.response_metadata["timings"] = chunk["timings"]
+        return gen
 
 
 def create_llamacpp_model(
@@ -111,18 +136,38 @@ def create_llamacpp_model(
     _effort = os.getenv("LLAMACPP_REASONING_EFFORT", "low").strip()
     reasoning_effort = _effort if _effort and _effort != "default" else None
 
+    # Token accounting on streamed calls. ChatOpenAI only auto-enables stream_usage for the
+    # default OpenAI URL; with base_url set it sends no stream_options and llama-server sends
+    # no usage, so every usage_metadata would be None. Streaming-only effect; the CLI's
+    # non-streaming path already gets usage in the response body.
+    stream_usage = True
+
+    # Streaming silence watchdog. langchain-openai (>=1.2) raises after 120 s with no
+    # parsed chunk on ASYNC streaming calls. llama-server sends NOTHING during prefill,
+    # and after a large tool result the prefill of a 176B MoE routinely exceeds 120 s
+    # (seen 2026-09-28: 7th model call of a PDU query, 0 chunks in 120 s, turn killed).
+    # The server is local and the web layer has its own cancel path, so default to OFF.
+    # Non-streaming calls (CLI, eval harness) are unaffected either way.
+    _sct = os.getenv("LLAMACPP_STREAM_CHUNK_TIMEOUT_S", "0").strip().lower()
+    stream_chunk_timeout: float | None = (
+        None if _sct in ("", "0", "none", "off") else float(_sct)
+    )
+
     logger.info("Creating llama.cpp model", model=model, base_url=base_url,
                 n_ctx=n_ctx, max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort)
+                reasoning_effort=reasoning_effort,
+                stream_chunk_timeout=stream_chunk_timeout)
 
     try:
-        llm = ChatOpenAI(
+        llm = LlamaCppChatOpenAI(
             model=model,
             temperature=temperature,
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            stream_usage=stream_usage,
+            stream_chunk_timeout=stream_chunk_timeout,
             # Standard OpenAI parameters
             top_p=0.95,
             stop=["<|im_end|>", "<|endoftext|>"],  # Common stop tokens for Qwen
@@ -131,8 +176,10 @@ def create_llamacpp_model(
             profile={"max_input_tokens": n_ctx},
         )
 
-        # Test the model if validation is requested
-        if validate:
+        # Test the model if validation is requested. This is a SYNC invoke inside callers'
+        # async initialize(); the web server disables it per-process via the env gate.
+        validate_env = os.getenv("LLAMACPP_VALIDATE_ON_INIT", "true").strip().lower()
+        if validate and validate_env not in ("0", "false", "no"):
             try:
                 response = llm.invoke("test")
                 logger.info("llama.cpp model validated successfully", model=model, response_len=len(response.content))

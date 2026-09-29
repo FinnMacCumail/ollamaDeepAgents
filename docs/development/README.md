@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-09-28: Web Chat — FastAPI + Nuxt over the local Qwen3.8-Flash-Next agent](2026-09-28_web-chat.md)
+**Feature (implemented from `PRPs/netbox-web-chat.md`):** a browser chat with token-level streaming, tool-activity display, cancel, per-conversation memory and server-reported token/context accounting, without changing the agent.
+**Key points:**
+- One `NetBoxDeepAgent` per process; the browser conversation id is the LangGraph `thread_id`. `query()` untouched; a new `stream_events()` uses `stream_mode=["messages","updates"]`.
+- Turns are serialised with an `asyncio.Lock` instead of `--parallel` (one llama-server slot, stdio MCP); waiting clients get a queue position; cancel frees the slot.
+- Token counts are the server's: `stream_usage=True` (off by default for a custom `base_url`) plus a `ChatOpenAI` subclass that keeps llama.cpp `timings`, so the UI shows resident context, cached share and real prefill/decode t/s.
+- The pre-existing "silent empty reply" (`finish_reason=length`, reasoning ate the budget) is now a visible error with its usage evidence.
+
 ### [2026-09-21: Week in Review — v5 Benchmark and Local Frontier Inference](2026-09-21_week-in-review-v5-benchmark-and-local-inference.md)
 **Retrospective (both workstreams delivered):** what the week of 15–21 Sep produced across both repos — and the part not recoverable from any single commit: two published claims that the next run contradicted, and the corrections.
 **Key points:**
