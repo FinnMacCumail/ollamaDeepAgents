@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-05: Web Chat Persistence — SQLite checkpoints and cancel rollback](2026-10-05_web-chat-persistence.md)
+**Feature (implemented from `PRPs/netbox-web-chat-persistence.md`):** conversation memory for the web chat survives backend restarts; cancelled turns are rolled back instead of leaving an orphaned question in the thread.
+**Key points:**
+- `NetBoxDeepAgent(checkpointer=...)` with the `InMemorySaver` default unchanged for CLI/eval; the web lifespan injects `AsyncSqliteSaver` (`langgraph-checkpoint-sqlite==3.1.1`, nothing else upgraded) and fails startup if the DB cannot open.
+- Verified restart: thread known after `python -m src.web` restart, follow-up answered from memory with 0 tool calls.
+- Cancel left orphaned messages and a pending graph task; `rollback_turn()` removes them via `aupdate_state` + `RemoveMessage`, attributed to the node that routes to END (discovered from the graph; it is `FilterErrorRecoveryMiddleware.after_model`, not `model`).
+- `resumed` carries `conversation_id`; `DELETE /conversations/{id}` forgets a thread server-side. No transcript import, no catalogue DB (by design).
+
 ### [2026-09-28: Web Chat — FastAPI + Nuxt over the local Qwen3.8-Flash-Next agent](2026-09-28_web-chat.md)
 **Feature (implemented from `PRPs/netbox-web-chat.md`):** a browser chat with token-level streaming, tool-activity display, cancel, per-conversation memory and server-reported token/context accounting, without changing the agent.
 **Key points:**

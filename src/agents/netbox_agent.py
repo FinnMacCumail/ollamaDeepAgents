@@ -10,6 +10,8 @@ from typing import Any
 
 from deepagents import HarnessProfile, create_deep_agent, register_harness_profile
 from deepagents.backends.filesystem import FilesystemBackend
+from langchain_core.messages import RemoveMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 # Project root, computed from this file's location so skills resolve
@@ -260,6 +262,7 @@ class NetBoxDeepAgent:
         skills_path: str = "src/skills",
         enable_metrics: bool = True,
         backend: str | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
     ):
         """
         Initialize the NetBox DeepAgent.
@@ -270,6 +273,9 @@ class NetBoxDeepAgent:
             skills_path: Path to skills directory
             enable_metrics: Whether to enable metrics tracking
             backend: LLM backend to use ("ollama" or "llamacpp", defaults to env var or "ollama")
+            checkpointer: LangGraph checkpointer for conversation memory. Defaults to a
+                per-process InMemorySaver (CLI, eval harness). The web server injects a
+                durable SQLite saver so threads survive restarts.
         """
         self.netbox_config = netbox_config
         self.model_name = model_name
@@ -287,8 +293,9 @@ class NetBoxDeepAgent:
         self.tool_wrapper = None
         # Conversation memory: one checkpointer for the agent, one rolling thread_id.
         # Each query in this thread sees prior turns; new_conversation() rotates the id.
-        self.checkpointer = InMemorySaver()
+        self.checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
         self.thread_id = uuid.uuid4().hex
+        self._rollback_node_name: str | None = None
 
     @staticmethod
     def _capture_skill_warnings():
@@ -608,6 +615,110 @@ class NetBoxDeepAgent:
             response_parts.append(chunk)
         return "".join(response_parts)
 
+    def _thread_config(self, thread_id: str) -> dict[str, Any]:
+        return {"configurable": {"thread_id": thread_id}}
+
+    async def thread_exists(self, thread_id: str) -> bool:
+        """True when the checkpointer holds any state for this thread."""
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+        state = await self.agent.aget_state(self._thread_config(thread_id))
+        return bool(state and state.values)
+
+    async def message_ids(self, thread_id: str) -> set[str]:
+        """Ids of every message currently in the thread (empty for an unknown thread)."""
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+        state = await self.agent.aget_state(self._thread_config(thread_id))
+        messages = state.values.get("messages", []) if state and state.values else []
+        return {m.id for m in messages if getattr(m, "id", None)}
+
+    async def rollback_turn(self, thread_id: str, keep_ids: set[str]) -> int:
+        """Remove every message added since `keep_ids` and clear any pending graph task.
+
+        Used after a cancelled or failed turn. LangGraph has already checkpointed the
+        user message and the model's tool-call message, left `state.next` pointing at
+        the unfinished step, and may hold PENDING WRITES from tool calls that finished
+        before the cancel (parallel tool calls run as separate tasks). A later message
+        would start a fresh run but keep all of that in context forever.
+
+        Verified on langgraph 1.2.5 against the real agent graph:
+        - `aget_state(cfg)` merges pending writes into `values`; a state pinned to the
+          checkpoint id shows committed channels only. `RemoveMessage` acts on the
+          committed channel, so pass 1 removes committed orphans only.
+        - `aupdate_state` applies the pending writes of tasks that had already finished
+          INTO the new checkpoint (pregel/main.py "apply writes from tasks that already
+          ran"), so a finished tool result becomes committed by the rollback itself.
+          Pass 2 re-reads the state and removes whatever is not in `keep_ids`.
+        Returns the number of orphaned messages removed across both passes.
+        """
+        if not self.agent:
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+        cfg = self._thread_config(thread_id)
+        merged = await self.agent.aget_state(cfg)
+        if not merged or not merged.values:
+            return 0
+
+        def _ids(state: Any) -> list[str]:
+            msgs = state.values.get("messages", []) if state and state.values else []
+            return [m.id for m in msgs if getattr(m, "id", None)]
+
+        pinned = merged.config if merged.config else cfg
+        committed = await self.agent.aget_state(pinned)
+        orphans = [i for i in _ids(committed) if i not in keep_ids]
+        if not orphans and not merged.next and not any(t.result for t in merged.tasks):
+            return 0
+
+        removed = 0
+        # Pass 1: committed orphans; this also clears the pending step and commits any
+        # finished-but-uncommitted tool results. Pass 2 removes those.
+        for _ in range(2):
+            await self.agent.aupdate_state(
+                cfg,
+                {"messages": [RemoveMessage(id=i) for i in orphans]},
+                as_node=self._rollback_node(),
+            )
+            removed += len(orphans)
+            after = await self.agent.aget_state(cfg)
+            orphans = [i for i in _ids(after) if i not in keep_ids]
+            if not orphans:
+                break
+        if orphans or (after and after.next):
+            logger.warning(
+                "Rollback incomplete",
+                thread_id=thread_id[:8],
+                leftover=len(orphans),
+                pending=list(after.next) if after else [],
+            )
+        logger.info("Rolled back turn", thread_id=thread_id[:8], removed=removed)
+        return removed
+
+    def _rollback_node(self) -> str:
+        """Node to attribute a rollback write to: the one whose edge leads to END.
+
+        aupdate_state schedules the successors of `as_node`. Writing as "model" would
+        queue the after_model middleware hooks and leave the thread with a pending task;
+        writing as the node that routes to END (in this graph the last after_model hook,
+        with a conditional edge that goes to END when the final message has no tool
+        calls) leaves nothing pending. Discovered from the compiled graph so middleware
+        changes cannot silently break it; falls back to "model".
+        """
+        if self._rollback_node_name is None:
+            name = "model"
+            try:
+                graph = self.agent.get_graph()
+                to_end = [e.source for e in graph.edges if e.target == "__end__"]
+                if to_end:
+                    name = to_end[0]
+            except Exception as e:  # noqa: BLE001 - best effort; fallback is still correct
+                logger.warning("Could not inspect graph for rollback node", error=str(e))
+            self._rollback_node_name = name
+        return self._rollback_node_name
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete all checkpoints of a thread from the checkpointer."""
+        await self.checkpointer.adelete_thread(thread_id)
+
     def new_conversation(self) -> str:
         """Start a fresh conversation thread, discarding prior history.
 
@@ -664,6 +775,7 @@ async def create_netbox_agent(
     skills_path: str = "src/skills",
     enable_metrics: bool = True,
     backend: str | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> NetBoxDeepAgent:
     """
     Create and initialize a NetBox DeepAgent.
@@ -674,6 +786,7 @@ async def create_netbox_agent(
         skills_path: Path to skills directory
         enable_metrics: Whether to enable metrics
         backend: LLM backend to use ("ollama" or "llamacpp")
+        checkpointer: Optional durable checkpointer (web server); default InMemorySaver
 
     Returns:
         Initialized NetBoxDeepAgent
@@ -684,6 +797,7 @@ async def create_netbox_agent(
         skills_path=skills_path,
         enable_metrics=enable_metrics,
         backend=backend,
+        checkpointer=checkpointer,
     )
     await agent.initialize()
     return agent

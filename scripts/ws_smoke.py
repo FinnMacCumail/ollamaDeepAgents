@@ -130,6 +130,12 @@ async def main() -> int:
     p.add_argument("--cancel-after", type=float, default=None, help="send cancel after N seconds")
     p.add_argument("--usage", action="store_true", help="print the server ledger afterwards")
     p.add_argument("--json", action="store_true", help="print raw chunks")
+    p.add_argument(
+        "--expect-known",
+        choices=["true", "false"],
+        default=None,
+        help="assert the server's resumed.known value (restart test); exit 3 on mismatch",
+    )
     args = p.parse_args()
 
     conversation_id = args.conversation_id or uuid.uuid4().hex
@@ -141,7 +147,15 @@ async def main() -> int:
             f"[connected] model={first.get('metadata', {}).get('model')} conversation={conversation_id}"
         )
         await ws.send(json.dumps({"type": "resume", "conversation_id": conversation_id}))
-        print(f"[resumed] {json.loads(await ws.recv()).get('metadata')}")
+        resumed = json.loads(await ws.recv()).get("metadata") or {}
+        print(f"[resumed] {resumed}")
+        if args.expect_known is not None and bool(resumed.get("known")) != (
+            args.expect_known == "true"
+        ):
+            print(
+                f"EXPECTED known={args.expect_known}, got {resumed.get('known')}", file=sys.stderr
+            )
+            return 3
 
         terminal = await run_turn(ws, conversation_id, args.message, args.cancel_after, args.json)
         if args.cancel_after is not None and (terminal or {}).get("type") != "cancelled":

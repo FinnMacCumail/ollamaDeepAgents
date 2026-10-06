@@ -39,6 +39,7 @@ class TurnRunner:
         self._waiting = 0
         self._current: asyncio.Task[None] | None = None
         self._current_owner: str | None = None
+        self._current_thread: str | None = None
         self._user_cancel = False
         self._ledger: dict[str, list[TurnUsage]] = defaultdict(list)
 
@@ -53,6 +54,14 @@ class TurnRunner:
 
     def owns_turn(self, ws_id: str) -> bool:
         return self._current is not None and self._current_owner == ws_id
+
+    def owns_thread(self, conversation_id: str) -> bool:
+        """True while a turn on this conversation is running."""
+        return self._current is not None and self._current_thread == conversation_id
+
+    def forget(self, conversation_id: str) -> None:
+        """Drop the usage ledger for a deleted conversation."""
+        self._ledger.pop(conversation_id, None)
 
     # ------------------------------------------------------------------ ledger
     def record(self, conversation_id: str, usage: TurnUsage) -> None:
@@ -119,6 +128,7 @@ class TurnRunner:
         phase["value"] = "running"
         self._current = asyncio.current_task()
         self._current_owner = ws_id
+        self._current_thread = conversation_id
         self._user_cancel = False
         stats = TurnStats(n_ctx=self.config.n_ctx)
         # One LangGraph root run per turn, minted here so the trace link exists up front.
@@ -127,6 +137,8 @@ class TurnRunner:
         if self.trace_linker is not None:
             stats.usage.trace_url = self.trace_linker.url_for(run_id)
         turn_start = time.monotonic()
+        # Snapshot the thread before the turn so a cancel/error can roll back to exactly here.
+        keep_ids = await self._message_ids(conversation_id)
         try:
             async for mode, payload in self.agent.stream_events(
                 text, conversation_id, run_id=run_id
@@ -138,31 +150,67 @@ class TurnRunner:
             stats.usage.elapsed_s = round(time.monotonic() - turn_start, 3)
             if not self._user_cancel:
                 raise  # shutdown: propagate
+            removed = await self._safe_rollback(conversation_id, keep_ids)
             await send(
                 StreamChunk(
                     type="cancelled",
                     completed=True,
-                    content="Cancelled. The model will not remember this partial answer.",
-                    metadata=self._terminal_meta(stats, conversation_id),
+                    content="Cancelled. The thread was rolled back to your previous question.",
+                    metadata={
+                        **self._terminal_meta(stats, conversation_id),
+                        "rolled_back_messages": removed,
+                    },
                 )
             )
         except Exception as e:  # noqa: BLE001 - surface any agent failure to the client
             logger.error("Turn failed", error=str(e), conversation_id=conversation_id[:8])
             stats.usage.elapsed_s = round(time.monotonic() - turn_start, 3)
+            removed = await self._safe_rollback(conversation_id, keep_ids)
             await send(
                 StreamChunk(
                     type="error",
                     completed=True,
                     content=sanitise_error(str(e)),
-                    metadata={"kind": "agent", **self._terminal_meta(stats, conversation_id)},
+                    metadata={
+                        "kind": "agent",
+                        **self._terminal_meta(stats, conversation_id),
+                        "rolled_back_messages": removed,
+                    },
                 )
             )
         finally:
             self.record(conversation_id, stats.usage)
             self._current = None
             self._current_owner = None
+            self._current_thread = None
             self._lock.release()
             heartbeat.cancel()
+
+    async def _message_ids(self, conversation_id: str) -> set[str]:
+        """Thread message ids before a turn; empty when the agent cannot report them."""
+        fn = getattr(self.agent, "message_ids", None)
+        if fn is None:
+            return set()
+        try:
+            return set(await fn(conversation_id))
+        except Exception as e:  # noqa: BLE001 - never block a turn on bookkeeping
+            logger.warning("Could not snapshot thread", error=str(e))
+            return set()
+
+    async def _safe_rollback(self, conversation_id: str, keep_ids: set[str]) -> int:
+        """Drop everything the failed/cancelled turn added. -1 when rollback itself failed.
+
+        Runs while this task still holds the turn lock, so no other turn can write to
+        the thread in between.
+        """
+        fn = getattr(self.agent, "rollback_turn", None)
+        if fn is None:
+            return 0
+        try:
+            return int(await fn(conversation_id, keep_ids))
+        except Exception as e:  # noqa: BLE001 - report, never mask the original outcome
+            logger.error("Rollback failed", error=str(e), conversation_id=conversation_id[:8])
+            return -1
 
     @staticmethod
     def _terminal_meta(stats: TurnStats, conversation_id: str) -> dict[str, Any]:

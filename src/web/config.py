@@ -38,6 +38,8 @@ class WebConfig(BaseModel):
     llama_base_url: str = Field(default="http://localhost:58123")
     n_ctx: int = Field(default=131072, gt=0)
     enable_graphql: bool = Field(default=True)
+    # SQLite file for durable LangGraph checkpoints; relative paths resolve from PROJECT_ROOT.
+    checkpoint_db: str = Field(default="data/web_checkpoints.sqlite")
 
 
 def load_web_config() -> tuple[WebConfig, NetBoxConfig]:
@@ -79,5 +81,6 @@ def load_web_config() -> tuple[WebConfig, NetBoxConfig]:
         llama_base_url=llama_base,
         n_ctx=int(os.getenv("LLAMACPP_N_CTX", "131072")),
         enable_graphql=_env_bool("ENABLE_GRAPHQL", True),
+        checkpoint_db=os.getenv("WEB_CHECKPOINT_DB", "data/web_checkpoints.sqlite"),
     )
     return web_config, netbox_config

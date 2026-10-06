@@ -245,6 +245,15 @@ export const useConversations = () => {
   }
 
   const deleteConversation = (conversationId: string): boolean => {
+    // Also drop the server-side thread (checkpoints + ledger). Fire-and-forget: the local
+    // delete must succeed even when the backend is down.
+    try {
+      const config = useRuntimeConfig()
+      void $fetch(`${config.public.apiUrl}/conversations/${conversationId}`, { method: 'DELETE' })
+        .catch((error: unknown) => console.warn('Server-side delete failed:', error))
+    } catch (error) {
+      console.warn('Server-side delete not attempted:', error)
+    }
     const index = conversations.value.findIndex(c => c.id === conversationId)
     if (index === -1) return false
     conversations.value.splice(index, 1)

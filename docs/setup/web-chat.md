@@ -70,6 +70,7 @@ The backend's own process disables the blocking start-up model probe
 | `GET /models` | the one loaded model (informational; no switching) |
 | `GET /conversations/{id}/messages` | user/assistant transcript from the checkpointer (404 if unknown) |
 | `GET /conversations/{id}/usage` | cumulative token ledger for the thread |
+| `DELETE /conversations/{id}` | forget the thread on the server: checkpoints and ledger (409 while a turn runs on it) |
 | `GET /conversations/{id}/traces` | the thread's LangSmith root runs (oldest first) with trace URLs; `[]` when tracing is off. Served from LangSmith, so it works for threads the backend no longer remembers; the UI uses it to backfill "trace" links on older turns |
 | `WS /ws/chat` | chat stream; see `src/web/models.py` for `ChunkType` and `ClientMessage` |
 
@@ -97,9 +98,15 @@ The backend's own process disables the blocking start-up model probe
 
 - **One turn at a time.** The llama-server has one slot and the MCP client is a stdio
   subprocess, so the backend serialises turns. A second tab sees `queued (n)`.
-- **Memory is per process.** `InMemorySaver` forgets every thread on backend restart. The UI
-  keeps the transcript in localStorage and shows a "server memory lost" banner; start a new
-  conversation.
+- **Memory survives backend restarts** (since 2026-10-05). LangGraph checkpoints live in SQLite at
+  `WEB_CHECKPOINT_DB` (default `data/web_checkpoints.sqlite`, project-root relative). Conversations
+  created before that date exist only in the browser and show a "no memory of this conversation"
+  banner. Back up the database together with `conversation_history/` and `large_tool_results/`,
+  which hold the summarizer's offloaded artifacts for the same threads. The CLI and the eval
+  harness still use per-process memory on purpose.
+- **Cancel rolls the thread back.** Stop removes the cancelled question and any partial tool loop
+  from the server thread, so later answers are not influenced by it. The browser keeps the
+  cancelled bubble for the record.
 - **Switching conversations is slow on the first turn.** Different history = different prefix =
   cold prefill (measured 81.8 s for 8.7k tokens).
 - **No auth.** Bind stays on `127.0.0.1`. Single-operator tool.
@@ -115,4 +122,5 @@ The backend's own process disables the blocking start-up model probe
 | Ledger shows zeros | `stream_usage` not set on the model; see `create_llamacpp_model()` |
 | `No streaming chunk received for 120.0s` error after a big tool result | langchain-openai's async streaming watchdog; llama-server is silent while it prefills a large prompt. Keep `LLAMACPP_STREAM_CHUNK_TIMEOUT_S=0` (default) or raise it well above your longest prefill |
 | Empty bubble | should not happen; if it does, check backend log for `finish_reason=length` and file it |
+| `Opening checkpoint store` then startup fails | the `WEB_CHECKPOINT_DB` path is unwritable or locked by another process; fix the path. The server never falls back to in-memory |
 | Backend port in use | 8000 is NetBox, 8001/8002 the claude app; change `WEB_PORT` and `NUXT_PUBLIC_*` together |
