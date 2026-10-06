@@ -11,7 +11,7 @@ use?"*) took 283 s on a single model call. The call was slow because the precedi
 was 52,721 characters: `netbox_get_objects("dcim.poweroutlet", filters={"device_id__in": [...12
 PDU ids...]})` had returned the first 200 power outlets **of every tenant**. NetBox had not
 rejected the filter; it had dropped it. The model noticed the tenant mismatch, fell back to 12
-per-device calls, and still answered 17/96 (the per-PDU totals were right; the sum was not).
+per-device calls, and answered 17 of 96 correctly. The cost was the failure, not the answer.
 
 The September run of the same ladder (`01a0e942-…`) never hit this because the model used the
 list form `{"device_id": [...]}` there. Same question, two syntaxes, one of them a silent no-op.
