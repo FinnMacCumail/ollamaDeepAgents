@@ -25,7 +25,8 @@ llama.cpp backend (see `docs/setup/llamacpp.md`) is the data-never-leaves-the-bo
 2. **Understand the problem domain (the core constraint):**
    - The NetBox MCP server rejects multi-hop filters like `device__site_id`.
    - It rejects unsupported Django lookup suffixes. The validator's allow-list of suffixes is:
-     `n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte, in`.
+     `n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte`.
+     `__in` is rejected on purpose: NetBox silently ignores it. Multi-value = bare key + list.
    - Relationship filters take a **numeric ID or lowercase slug**, never a display name.
    - GenericForeignKey fields (`assigned_object_id`, `scope_id`, `object_id`) are scalar-only.
 3. **Check status:** `TODO.md`, recent `git log`, and `docs/development/README.md` (the

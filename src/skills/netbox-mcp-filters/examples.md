@@ -150,7 +150,7 @@ for device in devices['results']:
 {"name__icontains": "router"}  # ❌
 {"name__startswith": "nyc"}  # ❌
 {"created__gte": "2024-01-01"}  # ❌
-{"id__in": [1, 2, 3]}  # ❌
+{"id__in": [1, 2, 3]}  # ❌  (NetBox silently ignores it and returns EVERYTHING — use {"id": [1, 2, 3]})
 {"description__regex": ".*prod.*"}  # ❌
 ```
 

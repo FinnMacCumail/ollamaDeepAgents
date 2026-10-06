@@ -1,0 +1,57 @@
+diff --git a/src/netbox_mcp_server/server.py b/src/netbox_mcp_server/server.py
+index 0abf64e..5118aa0 100644
+--- a/src/netbox_mcp_server/server.py
++++ b/src/netbox_mcp_server/server.py
+@@ -149,7 +149,11 @@ def validate_filters(filters: dict) -> None:
+         "lte",
+         "gt",
+         "gte",
+-        "in",
++        # NOTE (local change, not upstream): "in" removed. NetBox 4.3 silently
++        # ignores `<field>__in` and returns the unfiltered set; multi-value is a
++        # list value on the bare key (repeated query params). Verified live
++        # 2026-10-06; see ollamaDeepAgents/docs/development/
++        # 2026-10-06_in-lookup-silently-ignored.md.
+     }
+ 
+     for filter_name in filters:
+@@ -184,11 +188,13 @@ def validate_filters(filters: dict) -> None:
+ 
+                 FILTER RULES:
+                 Valid: Direct fields like {'site_id': 1, 'name': 'router', 'status': 'active'}
+-                Valid: Lookups like {'name__ic': 'switch', 'id__in': [1,2,3], 'vid__gte': 100}
++                Valid: Lookups like {'name__ic': 'switch', 'vid__gte': 100}
++                Valid: Multi-value via a LIST on the bare key: {'id': [1,2,3]}, {'device_id': [149,150]}
++                Invalid: {'id__in': [1,2,3]} - NetBox silently IGNORES __in and returns everything
+                 Invalid: Multi-hop like {'device__site_id': 1} - NOT supported
+ 
+                 Lookup suffixes: n, ic, nic, isw, nisw, iew, niew, ie, nie,
+-                                 empty, regex, iregex, lt, lte, gt, gte, in
++                                 empty, regex, iregex, lt, lte, gt, gte
+ 
+                 Two-step pattern for cross-relationship queries:
+                   sites = netbox_get_objects('dcim.site', {'name': 'NYC'})
+diff --git a/tests/test_filter_validation.py b/tests/test_filter_validation.py
+index 8e8bd12..01d5db3 100644
+--- a/tests/test_filter_validation.py
++++ b/tests/test_filter_validation.py
+@@ -12,7 +12,18 @@ def test_direct_field_filters_pass():
+ 
+ def test_lookup_suffixes_pass():
+     """Lookup suffixes should pass validation."""
+-    validate_filters({"name__ic": "switch", "id__in": [1, 2, 3], "vid__gte": 100})
++    validate_filters({"name__ic": "switch", "vid__gte": 100})
++
++
++def test_list_value_multi_value_passes():
++    """Multi-value is a list on the bare key (NetBox repeats the query param)."""
++    validate_filters({"id": [1, 2, 3], "device_id": [149, 150]})
++
++
++def test_in_suffix_rejected():
++    """`__in` is rejected: NetBox silently ignores it and returns the unfiltered set."""
++    with pytest.raises(ValueError, match="invalid lookup suffix"):
++        validate_filters({"id__in": [1, 2, 3]})
+ 
+ 
+ def test_special_parameters_ignored():

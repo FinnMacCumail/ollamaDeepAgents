@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-06: `__in` is silently ignored by NetBox — removed from the validator and the skill](2026-10-06_in-lookup-silently-ignored.md)
+**Correction (validator + skill + docs + local MCP server copy):** `<field>__in` is not an error on NetBox 4.3, it is a no-op that returns the unfiltered set; the only multi-value syntax is a list on the bare key.
+**Key points:**
+- Found via the web chat: `device_id__in` on 12 PDUs returned 200 outlets of every tenant (52,721 chars), a 283 s model call and a wrong sum. Verified live on pk, relational-id, string and integer fields: none honour `__in`.
+- `in` dropped from `VALID_SUFFIXES` (now diverges from the MCP server's list on purpose); `suggest_alternative` points at `{"device_id": [149, 150]}`; skill's "BATCHING MULTIPLE IDs" rewritten; `AGENTS.md`/`CLAUDE.md` suffix lists updated.
+- The MCP server's own tool description was the source of the bad example; corrected in the local copy, diff saved as `2026-10-06_netbox-mcp-server-in-suffix.patch`.
+- Session harness re-run recorded in the note (`docs/traces/2026-10-06_netbox-session_in-lookup-fix.*`).
+
 ### [2026-10-05: Web Chat Persistence — SQLite checkpoints and cancel rollback](2026-10-05_web-chat-persistence.md)
 **Feature (implemented from `PRPs/netbox-web-chat-persistence.md`):** conversation memory for the web chat survives backend restarts; cancelled turns are rolled back instead of leaving an orphaned question in the thread.
 **Key points:**
