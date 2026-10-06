@@ -18,6 +18,13 @@ class FakeAgent:
         self.fail = fail
         self.calls = []
 
+    async def message_ids(self, thread_id):
+        return {"m1", "m2"}
+
+    async def rollback_turn(self, thread_id, keep_ids):
+        self.rollbacks = getattr(self, "rollbacks", []) + [(thread_id, set(keep_ids))]
+        return 3
+
     async def stream_events(self, text, thread_id, run_id=None):
         self.calls.append((text, thread_id))
         self.run_ids = getattr(self, "run_ids", []) + [run_id]
@@ -202,3 +209,55 @@ async def test_no_linker_means_no_url():
 
     await runner.run(send, "ws1", "c1", "q1")
     assert sent[-1].metadata["run_id"] and sent[-1].metadata["trace_url"] is None
+
+
+async def test_cancel_rolls_back_to_pre_turn_ids():
+    agent = FakeAgent(deltas=tuple("x" * 50), delay=0.01)
+    runner = TurnRunner(agent, _cfg())
+    sent = []
+
+    async def send(c):
+        sent.append(c)
+
+    t = asyncio.create_task(runner.run(send, "ws1", "conv1", "q"))
+    await asyncio.sleep(0.05)
+    assert runner.cancel("ws1") is True
+    await t
+    assert agent.rollbacks == [("conv1", {"m1", "m2"})]
+    assert sent[-1].type == "cancelled"
+    assert sent[-1].metadata["rolled_back_messages"] == 3
+    assert "rolled back" in sent[-1].content
+
+
+async def test_error_rolls_back_but_done_does_not():
+    bad = FakeAgent(fail=True)
+    runner = TurnRunner(bad, _cfg())
+    sent = []
+
+    async def send(c):
+        sent.append(c)
+
+    await runner.run(send, "ws1", "c1", "q1")
+    assert bad.rollbacks == [("c1", {"m1", "m2"})]
+    assert sent[-1].type == "error" and sent[-1].metadata["rolled_back_messages"] == 3
+
+    good = FakeAgent()
+    runner2 = TurnRunner(good, _cfg())
+    await runner2.run(send, "ws1", "c2", "q2")
+    assert getattr(good, "rollbacks", []) == []
+    assert sent[-1].type == "done"
+
+
+async def test_agent_without_rollback_support_still_works():
+    class Minimal:
+        async def stream_events(self, text, thread_id, run_id=None):
+            yield "messages", (AIMessageChunk(content="ok"), {})
+
+    runner = TurnRunner(Minimal(), _cfg())
+    sent = []
+
+    async def send(c):
+        sent.append(c)
+
+    await runner.run(send, "ws1", "c1", "q1")
+    assert sent[-1].type == "done"

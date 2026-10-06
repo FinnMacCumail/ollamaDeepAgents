@@ -142,7 +142,6 @@ def valid_filters():
         {"name__iew": "-01"},          # case-insensitive ends-with
         {"name__ie": "Router01"},      # case-insensitive exact
         {"name__n": "decom"},          # negation
-        {"id__in": [1, 2, 3]},         # multi-value lookup form
         {"created__gte": "2024-01-01"},
         {"created__gt": "2024-01-01"},
         {"vid__lt": 100},

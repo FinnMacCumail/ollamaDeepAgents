@@ -60,32 +60,40 @@ while True:
 
 ## BATCHING MULTIPLE IDs IN A SINGLE CALL
 
-A common need: "I have a known list of IDs, fetch them all in one query." TWO forms
-both work for standard fields — the canonical `__in` lookup, and the bare-key list form:
+A common need: "I have a known list of IDs, fetch them all in one query." There is
+exactly ONE form that works: the bare key with a list value. NetBox turns the list into
+repeated query parameters (`?id=1&id=2&id=3`), which is its native multi-value syntax.
 
 ```python
-# CANONICAL — __in lookup (matches the MCP server's own documented example)
-netbox_get_objects("dcim.site", filters={"id__in": [1, 2, 3, 14]})
-
-# ALSO WORKS — bare key with a list value (NetBox accepts repeated query params
-#              as multi-value: ?id=1&id=2&id=3)
+# CANONICAL — bare key, list value
 netbox_get_objects("dcim.site", filters={"id": [1, 2, 3, 14]})
 
-# Both also work for relational *_id keys:
-netbox_get_objects("dcim.rack", filters={"site_id__in": [1, 2, 3]}, fields=[...])
+# Same for relational *_id keys and plain fields:
 netbox_get_objects("dcim.rack", filters={"site_id": [1, 2, 3]}, fields=[...])
+netbox_get_objects("dcim.poweroutlet", filters={"device_id": [149, 150]}, fields=[...])
+netbox_get_objects("ipam.vlan", filters={"vid": [100, 200]}, fields=[...])
 ```
 
-Prefer the `__in` form — it matches the MCP server's tool-docstring example
-(`{'id__in': [1,2,3]}`) and is unambiguous.
+**NEVER use `__in`.** NetBox 4.3 does not raise an error for `<field>__in` — it silently
+DROPS the filter and returns the whole UNFILTERED set, so you get a huge page of the
+wrong objects and no signal that anything went wrong. Verified live on 2026-10-06:
+
+| Filter sent | Returned | Correct count |
+|---|---|---|
+| `{"device_id__in": [149, 150]}` on `dcim.poweroutlet` | 200 (every tenant's outlets) | 16 |
+| `{"id__in": [...]}`, `{"site_id__in": [25]}`, `{"name__in": [...]}` on `dcim.device` | 141 (all devices) | 2 / 30 / 2 |
+| `{"vid__in": [100, 200]}` on `ipam.vlan` | 94 (all VLANs) | 26 |
+
+The validator therefore rejects any `__in` key with a `TOOL_VALIDATION_ERROR` that
+points at the list form. (The upstream MCP server's tool description shows an
+`id__in` example — that example is wrong; follow this skill.)
 
 ### CRITICAL exception — GenericForeignKey ID fields are SCALAR
 
 A few filters look like `*_id` but are actually scalar (single value only) because they
-target a GenericForeignKey. **NEITHER `__in` NOR list-form works on these — even though
-the validator and the MCP server's whitelist BOTH accept `__in` in general.** This is a
-NetBox API-side limitation, not a syntax limitation. The validator cannot detect it for
-you; the request will reach NetBox and come back as HTTP 400.
+target a GenericForeignKey. **The list form does NOT work on these.** This is a NetBox
+API-side limitation, not a syntax limitation. The validator cannot detect it for you;
+the request will reach NetBox and come back as HTTP 400.
 
 | Object | Scalar GFK ID field | Use this multi-value alias instead |
 |---|---|---|
@@ -95,16 +103,15 @@ you; the request will reach NetBox and come back as HTTP 400.
 | `tenancy.contactassignment` | `object_id` (paired with `object_type`) | `contact_id`, `role_id` |
 
 ```python
-# BOTH OF THESE FAIL with HTTP 400 — confirmed in traces 019e638c and 019e63d4.
-# The validator does NOT catch them; NetBox itself rejects the combination.
+# THIS FAILS with HTTP 400 — confirmed in trace 019e638c.
+# The validator does NOT catch it; NetBox itself rejects the combination.
 
 netbox_get_objects("ipam.ipaddress",
-    filters={"assigned_object_id": [66, 67, ...],          # WRONG — list-form
+    filters={"assigned_object_id": [66, 67, ...],          # WRONG — list-form on a GFK
              "assigned_object_type": "dcim.interface"})
 
-netbox_get_objects("ipam.ipaddress",
-    filters={"assigned_object_id__in": [66, 67, ...],      # WRONG — __in lookup
-             "assigned_object_type": "dcim.interface"})
+# (`assigned_object_id__in` is no better: the validator rejects it, and NetBox
+#  would ignore it anyway — see "BATCHING MULTIPLE IDs" above.)
 
 # ALWAYS use the typed alias filter (multi-value capable, NetBox-supported):
 netbox_get_objects("ipam.ipaddress",
@@ -133,9 +140,7 @@ netbox_get_objects("ipam.ipaddress",
     filters={"assigned_object_id": [66, 67, 68, ...],
              "assigned_object_type": "dcim.interface"})
 
-# ALSO WRONG (__in lookup) — the validator accepts it (`__in` is on the MCP
-# whitelist) but NetBox returns HTTP 400 because GFK ID fields don't
-# support multi-value filtering. Confirmed in trace 019e63d4.
+# ALSO WRONG (__in lookup) — rejected by the validator; `__in` is never valid.
 netbox_get_objects("ipam.ipaddress",
     filters={"assigned_object_id__in": [66, 67, 68, ...],
              "assigned_object_type": "dcim.interface"})
@@ -286,8 +291,8 @@ issuing tool calls:
    each of X's interfaces. If they're all zero, the answer is "none" — skip the
    `ipam.ipaddress` query entirely.
 4. **Only issue separate tool calls for aspects not on the parent.** For each remaining
-   aspect, do a single `netbox_get_objects(<aspect_type>, filters={<parent>_id__in: ...})`
-   if supported, otherwise loop. Use `fields=[...]` on every call.
+   aspect, do a single `netbox_get_objects(<aspect_type>, filters={"<parent>_id": [id1, id2, ...]})`
+   (list form — never `__in`), otherwise loop. Use `fields=[...]` on every call.
 5. **Aggregate, then format.** Build the answer in one pass at the end — do not write
    partial answers between tool calls.
 
@@ -394,7 +399,9 @@ What they mean:
 | `empty` | is null/empty | `{"serial__empty": "true"}` |
 | `regex` / `iregex` | regex match (case-sensitive / -insensitive) | `{"name__iregex": "^core-.*-01$"}` |
 | `lt` / `lte` / `gt` / `gte` | numeric / datetime comparisons | `{"created__gt": "2026-05-01T00:00:00Z"}` |
-| `in` | multi-value (alternative to bare-key list form) | `{"id__in": [1, 2, 3]}` |
+
+`in` is **not** a valid suffix even though the MCP server's description lists it: NetBox
+ignores `__in` silently. Multi-value is always the bare key with a list — `{"id": [1, 2, 3]}`.
 
 **Common mistake**: the model often writes `name__icontains` or `name__contains` (Django
 ORM idioms). Neither is valid — use `name__ic` instead. Same for `__startswith` → `__isw`,

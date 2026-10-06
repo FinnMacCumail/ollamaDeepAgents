@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from ..utils.logging import get_logger, setup_logging
+from .checkpoints import open_checkpointer
 from .config import WebConfig, load_web_config
 from .llama_status import probe
 from .models import (
@@ -35,7 +36,7 @@ logger = get_logger(__name__)
 COMPACTION_FRACTION = 0.85  # DeepAgents compute_summarization_defaults() fraction trigger
 
 
-async def _build_agent(web_config: WebConfig, netbox_config: Any) -> Any:
+async def _build_agent(web_config: WebConfig, netbox_config: Any, checkpointer: Any = None) -> Any:
     """Create the agent. Split out so tests can patch it."""
     from ..agents.netbox_agent import create_netbox_agent
 
@@ -43,6 +44,7 @@ async def _build_agent(web_config: WebConfig, netbox_config: Any) -> Any:
         netbox_config=netbox_config,
         model_name=web_config.model_name,
         backend=web_config.backend,
+        checkpointer=checkpointer,
     )
 
 
@@ -64,16 +66,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         model=web_config.model_name,
         port=web_config.port,
     )
-    agent = await _build_agent(web_config, netbox_config)
-    app.state.agent = agent
-    # LangSmith trace links (optional): resolve ids off the event loop; None when tracing is off.
-    trace_linker = await asyncio.to_thread(resolve_trace_linker)
-    app.state.runner = TurnRunner(agent, web_config, trace_linker=trace_linker)
-    try:
-        yield
-    finally:
-        await agent.cleanup()
-        logger.info("Web chat stopped")
+    # Durable conversation memory: the saver's connection must outlive the agent, so the
+    # whole lifespan body sits inside it. An unopenable database aborts startup on purpose.
+    async with open_checkpointer(web_config.checkpoint_db) as saver:
+        agent = await _build_agent(web_config, netbox_config, checkpointer=saver)
+        app.state.agent = agent
+        app.state.checkpointer = saver
+        # LangSmith trace links (optional): resolve ids off the event loop; None when tracing is off.
+        trace_linker = await asyncio.to_thread(resolve_trace_linker)
+        app.state.runner = TurnRunner(agent, web_config, trace_linker=trace_linker)
+        try:
+            yield
+        finally:
+            await agent.cleanup()
+            logger.info("Web chat stopped")
 
 
 def create_app() -> FastAPI:
@@ -153,6 +159,19 @@ def create_app() -> FastAPI:
         runner: TurnRunner = app.state.runner
         return runner.conversation_usage(conversation_id)
 
+    @app.delete("/conversations/{conversation_id}", status_code=204)
+    async def delete_conversation(conversation_id: str) -> None:
+        """Forget a thread on the server: its checkpoints and its usage ledger entry."""
+        try:
+            ClientMessage.validate_conversation_id(conversation_id)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        runner: TurnRunner = app.state.runner
+        if runner.owns_thread(conversation_id):
+            raise HTTPException(status_code=409, detail="A turn is running on this conversation")
+        await app.state.agent.delete_thread(conversation_id)
+        runner.forget(conversation_id)
+
     @app.get("/conversations/{conversation_id}/traces", response_model=list[TraceRef])
     async def conversation_traces(conversation_id: str) -> list[TraceRef]:
         """LangSmith root runs of this thread, oldest first; [] when tracing is off.
@@ -219,16 +238,24 @@ def create_app() -> FastAPI:
 
                 if msg.type == "resume":
                     turns = 0
+                    known = False
                     if msg.conversation_id:
+                        known = await agent.thread_exists(msg.conversation_id)
                         turns = sum(
                             1
                             for m in await agent.get_history(msg.conversation_id)
                             if m["role"] == "user"
                         )
+                    # conversation_id lets the client drop a late reply for a thread it has
+                    # since switched away from.
                     await send(
                         StreamChunk(
                             type="resumed",
-                            metadata={"known": turns > 0, "turns": turns},
+                            metadata={
+                                "known": known,
+                                "turns": turns,
+                                "conversation_id": msg.conversation_id,
+                            },
                         )
                     )
                 elif msg.type == "new_conversation":

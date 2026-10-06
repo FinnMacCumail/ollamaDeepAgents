@@ -35,10 +35,14 @@ The NetBox MCP server accepts a **narrow** filter grammar. The `FilterValidator`
 `src/tools/netbox_tools.py` enforces it locally so the model gets a structured, recoverable
 error instead of an opaque HTTP 400.
 
-`VALID_SUFFIXES` (must stay in sync with the MCP server's whitelist):
+`VALID_SUFFIXES` (the MCP server's whitelist minus `in`):
 ```
-n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte, in
+n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte
 ```
+`in` is deliberately excluded: the MCP server lists it, but NetBox 4.3 silently ignores
+`<field>__in` and returns the unfiltered set (verified live 2026-10-06, see
+`docs/development/2026-10-06_in-lookup-silently-ignored.md`). Multi-value is the bare key
+with a list value: `{"device_id": [149, 150]}`.
 
 Rules:
 - **Relationship filters take a numeric ID or lowercase slug, never a display name.**
@@ -220,7 +224,8 @@ Cost note: a full 10-model cloud sweep can exhaust the Ollama Cloud Pro **sessio
 - **Decision records:** non-obvious architectural choices get a dated `docs/development/` note +
   a one-line entry in `docs/development/README.md`.
 - **Skill edits:** the runtime skill is `src/skills/netbox-mcp-filters/SKILL.md`. Frontmatter
-  needs `name:`. Keep `VALID_SUFFIXES` in `netbox_tools.py` and the skill's suffix guidance in sync.
+  needs `name:`. Keep `VALID_SUFFIXES` in `netbox_tools.py`, the skill's suffix guidance, and
+  the suffix lists in this file and `CLAUDE.md` in sync.
 
 ---
 

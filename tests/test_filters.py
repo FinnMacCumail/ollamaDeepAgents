@@ -48,8 +48,11 @@ class TestFilterValidator:
         """Test detection of Django ORM lookups that lack a valid MCP equivalent.
 
         Note: Django spellings like `__icontains` are NOT on the MCP server's
-        whitelist (which uses short forms like `__ic`). But `__in`, `__gte`,
-        `__regex` etc. ARE on the whitelist and must NOT be rejected.
+        whitelist (which uses short forms like `__ic`). But `__gte`, `__regex`
+        etc. ARE on the whitelist and must NOT be rejected. `__in` is the one
+        suffix the MCP server lists that this validator rejects: NetBox 4.3
+        silently ignores it and returns the unfiltered set (verified live,
+        2026-10-06), so the list-form bare key is the only multi-value form.
         """
         validator = FilterValidator()
 
@@ -66,9 +69,18 @@ class TestFilterValidator:
             assert is_valid is False, f"{filter_dict} should be rejected"
             assert "not on the MCP server's whitelist" in error or "not supported" in error
 
+        # `__in` is rejected with a hint pointing at the list form, because
+        # NetBox drops the filter silently instead of returning 400.
+        is_valid, error = validator.validate_filter({"device_id__in": [149, 150]})
+        assert is_valid is False
+        assert "__in" in error
+        hint = validator.suggest_alternative("device_id__in")
+        assert "silently ignored" in hint
+        assert "{'device_id': [" in hint
+
         # These ARE on the MCP server's VALID_SUFFIXES whitelist — must pass
         accepted_lookups = [
-            {"id__in": [1, 2, 3]},
+            {"device_id": [149, 150]},        # list form IS the multi-value syntax
             {"created__gte": "2024-01-01"},
             {"created__gt": "2024-01-01"},
             {"vid__lt": 100},

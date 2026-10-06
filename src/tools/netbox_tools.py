@@ -11,21 +11,26 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Lookup suffixes the MCP server's validate_filters() permits.
-# Source of truth: netbox-mcp-server/src/netbox_mcp_server/server.py:135-153
-# (the VALID_SUFFIXES frozenset). Keep this in sync with the upstream whitelist.
-# A previous version of this file maintained a blacklist that incorrectly
-# rejected `__in`, `__regex`, `__gt`, `__gte`, `__lt`, `__lte`, `__iregex` —
-# all of which ARE valid per the MCP server. Trace 019e63c0 surfaced the
-# inconsistency: the skill content (correct) and this validator (wrong) gave
-# the model contradictory guidance, costing a recovery cycle per attempt.
+# Lookup suffixes that NetBox's REST filtersets actually honour.
+# Base list: netbox-mcp-server/src/netbox_mcp_server/server.py:135-153 (the
+# MCP server's own VALID_SUFFIXES). `__regex`, `__gt/gte/lt/lte`, `__iregex`
+# were wrongly blacklisted once (trace 019e63c0) and are valid.
+#
+# `in` is DELIBERATELY ABSENT although the upstream MCP whitelist lists it.
+# NetBox 4.3 silently ignores `<field>__in` (no 400 — it drops the filter and
+# returns the UNFILTERED set), verified live on 2026-10-06 against every
+# field class: device_id__in=[149,150] -> 200 outlets (all tenants) vs
+# device_id=[149,150] -> 16; id__in, site_id__in, name__in, vid__in likewise.
+# Multi-value is the bare key with a list value (NetBox repeats the query
+# param: ?device_id=149&device_id=150). Rejecting `__in` here turns a silent
+# wrong answer into a structured TOOL_VALIDATION_ERROR the model can recover
+# from. See docs/development/2026-10-06_in-lookup-silently-ignored.md.
 VALID_SUFFIXES: frozenset[str] = frozenset({
     "n",
     "ic", "nic", "isw", "nisw", "iew", "niew", "ie", "nie",
     "empty",
     "regex", "iregex",
     "lt", "lte", "gt", "gte",
-    "in",
 })
 
 
@@ -34,7 +39,9 @@ class FilterValidator:
 
     Mirrors the MCP server's own validate_filters() at server.py:117 — rejects
     multi-hop relationship traversals (any chain of `__field__field`) and
-    double-underscore suffixes not on the VALID_SUFFIXES whitelist.
+    double-underscore suffixes not on the VALID_SUFFIXES whitelist — and is
+    stricter in one place: `__in` is rejected because NetBox ignores it (see
+    the VALID_SUFFIXES comment above).
     """
 
     @staticmethod
@@ -109,6 +116,14 @@ class FilterValidator:
             )
 
         field, suffix = parts[0], parts[1]
+
+        if suffix == "in":
+            return (
+                f"'__in' is silently ignored by NetBox (it returns the UNFILTERED "
+                f"set, not an error). To match several values, pass a list as the "
+                f"value of the bare key: filters={{'{field}': [<v1>, <v2>, ...]}} "
+                f"— NetBox repeats the query parameter (?{field}=v1&{field}=v2)."
+            )
 
         if suffix in FilterValidator._DJANGO_TO_MCP:
             correct = FilterValidator._DJANGO_TO_MCP[suffix]
@@ -223,7 +238,7 @@ class NetBoxToolWrapper:
                     f"the filter parameters and reissue with a corrected shape. "
                     f"Common causes (consult the netbox-mcp-filters skill):\n"
                     f"  - GenericForeignKey ID fields (assigned_object_id, scope_id, "
-                    f"object_id) are SCALAR — even `__in` fails on these. Use the "
+                    f"object_id) are SCALAR — a list value fails on these. Use the "
                     f"typed alias filter instead (e.g. `interface_id` for IPs on "
                     f"interfaces, `site_id` for prefixes on sites).\n"
                     f"  - Display names used where slugs/IDs are required "

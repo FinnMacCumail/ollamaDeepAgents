@@ -180,10 +180,14 @@ const handleStreamChunk = (chunk: StreamChunk) => {
       serverBackend.value = m.backend ?? ''
       break
 
-    case 'resumed':
+    case 'resumed': {
+      // A slow reply for a previously selected thread must not label the current one.
+      const forThread = m.conversation_id ? String(m.conversation_id) : null
+      if (forThread && activeThreadId.value && forThread !== activeThreadId.value) break
       serverKnowsThread.value = Boolean(m.known)
       serverTurns.value = Number(m.turns ?? 0)
       break
+    }
 
     case 'queued':
       phase.value = 'queued'
@@ -301,7 +305,7 @@ const handleStreamChunk = (chunk: StreamChunk) => {
     case 'cancelled':
       finaliseAssistant(
         { ...terminalMetaFromWire(m), cancelled: true, finishReason: 'cancelled' },
-        '(cancelled)'
+        '(cancelled — rolled back; the model will not remember this question)'
       )
       break
 

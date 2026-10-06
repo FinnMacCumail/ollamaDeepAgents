@@ -40,12 +40,27 @@ class FakeAgent:
     async def get_history(self, thread_id):
         return list(self.histories.get(thread_id, []))
 
+    async def thread_exists(self, thread_id):
+        return thread_id in self.histories
+
+    async def message_ids(self, thread_id):
+        return set()
+
+    async def rollback_turn(self, thread_id, keep_ids):
+        return 0
+
+    async def delete_thread(self, thread_id):
+        self.deleted = getattr(self, "deleted", []) + [thread_id]
+        self.histories.pop(thread_id, None)
+
     async def cleanup(self):
         self.cleaned = True
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
+    # The lifespan opens a real SQLite checkpoint store; keep it out of the project tree.
+    monkeypatch.setenv("WEB_CHECKPOINT_DB", str(tmp_path / "ck.sqlite"))
     monkeypatch.setenv("LLM_BACKEND", "llamacpp")
     monkeypatch.setenv("NETBOX_URL", "http://localhost:8000")
     monkeypatch.setenv("NETBOX_TOKEN", "t")
@@ -138,6 +153,7 @@ def test_ws_full_turn_and_history(client):
         resumed = ws.receive_json()
         assert resumed["type"] == "resumed" and resumed["metadata"]["known"] is True
         assert resumed["metadata"]["turns"] == 1
+        assert resumed["metadata"]["conversation_id"] == "conv1"
 
     r = client.get("/conversations/conv1/messages")
     assert r.status_code == 200
@@ -161,7 +177,7 @@ def test_ws_protocol_errors_keep_socket_open(client):
         assert err["content"] == "Nothing to cancel"
         ws.send_json({"type": "resume", "conversation_id": "nope"})
         resumed = ws.receive_json()
-        assert resumed["metadata"] == {"known": False, "turns": 0}
+        assert resumed["metadata"] == {"known": False, "turns": 0, "conversation_id": "nope"}
         ws.send_json({"type": "new_conversation"})
         reset = ws.receive_json()
         assert reset["type"] == "reset_complete" and len(reset["metadata"]["thread_id"]) == 32
@@ -206,3 +222,19 @@ def test_conversation_traces_backfill(client):
     )
     assert client.get("/conversations/unknown/traces").json() == []
     assert client.get("/conversations/bad%20id!/traces").status_code == 422
+
+
+def test_delete_conversation(client):
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "conversation_id": "todel", "message": "hi"})
+        while not ws.receive_json().get("completed"):
+            pass
+    assert client.get("/conversations/todel/messages").status_code == 200
+    assert client.get("/conversations/todel/usage").json()["turns"]
+    r = client.delete("/conversations/todel")
+    assert r.status_code == 204
+    assert client.fake.deleted == ["todel"]
+    assert client.get("/conversations/todel/messages").status_code == 404
+    assert client.get("/conversations/todel/usage").json()["turns"] == []
+    assert client.delete("/conversations/bad%20id!").status_code == 422

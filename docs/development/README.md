@@ -13,6 +13,22 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-06: `__in` is silently ignored by NetBox — removed from the validator and the skill](2026-10-06_in-lookup-silently-ignored.md)
+**Correction (validator + skill + docs + local MCP server copy):** `<field>__in` is not an error on NetBox 4.3, it is a no-op that returns the unfiltered set; the only multi-value syntax is a list on the bare key.
+**Key points:**
+- Found via the web chat: `device_id__in` on 12 PDUs returned 200 outlets of every tenant (52,721 chars), a 283 s model call and a wrong sum. Verified live on pk, relational-id, string and integer fields: none honour `__in`.
+- `in` dropped from `VALID_SUFFIXES` (now diverges from the MCP server's list on purpose); `suggest_alternative` points at `{"device_id": [149, 150]}`; skill's "BATCHING MULTIPLE IDs" rewritten; `AGENTS.md`/`CLAUDE.md` suffix lists updated.
+- The MCP server's own tool description was the source of the bad example; corrected in the local copy, diff saved as `2026-10-06_netbox-mcp-server-in-suffix.patch`.
+- Session harness re-run recorded in the note (`docs/traces/2026-10-06_netbox-session_in-lookup-fix.*`).
+
+### [2026-10-05: Web Chat Persistence — SQLite checkpoints and cancel rollback](2026-10-05_web-chat-persistence.md)
+**Feature (implemented from `PRPs/netbox-web-chat-persistence.md`):** conversation memory for the web chat survives backend restarts; cancelled turns are rolled back instead of leaving an orphaned question in the thread.
+**Key points:**
+- `NetBoxDeepAgent(checkpointer=...)` with the `InMemorySaver` default unchanged for CLI/eval; the web lifespan injects `AsyncSqliteSaver` (`langgraph-checkpoint-sqlite==3.1.1`, nothing else upgraded) and fails startup if the DB cannot open.
+- Verified restart: thread known after `python -m src.web` restart, follow-up answered from memory with 0 tool calls.
+- Cancel left orphaned messages and a pending graph task; `rollback_turn()` removes them via `aupdate_state` + `RemoveMessage`, attributed to the node that routes to END (discovered from the graph; it is `FilterErrorRecoveryMiddleware.after_model`, not `model`).
+- `resumed` carries `conversation_id`; `DELETE /conversations/{id}` forgets a thread server-side. No transcript import, no catalogue DB (by design).
+
 ### [2026-09-28: Web Chat — FastAPI + Nuxt over the local Qwen3.8-Flash-Next agent](2026-09-28_web-chat.md)
 **Feature (implemented from `PRPs/netbox-web-chat.md`):** a browser chat with token-level streaming, tool-activity display, cancel, per-conversation memory and server-reported token/context accounting, without changing the agent.
 **Key points:**

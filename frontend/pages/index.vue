@@ -55,8 +55,9 @@
       <!-- Server memory lost banner -->
       <div v-if="showMemoryLostBanner" class="memory-banner">
         <span>
-          The backend does not remember this conversation (it was probably restarted). The transcript
-          below is only in your browser; the model will not recall it. Continue as a new conversation.
+          The backend has no memory of this conversation (it predates persistent storage, or its
+          checkpoint database was removed). The transcript below is only in your browser; the model
+          will not recall it. Continue as a new conversation.
         </span>
         <button class="banner-button" @click="handleNewConversation">New conversation</button>
         <button class="banner-dismiss" title="Dismiss" @click="bannerDismissed = true">×</button>
