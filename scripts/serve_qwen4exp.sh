@@ -28,6 +28,31 @@
 #                          2048 was verified to fit alongside -c 131072 on
 #                          21 GiB, so do not raise it blindly.
 #
+#   --load-mode none       2.1x PREFILL in llama-bench (189 -> 390 pp2048, decode
+#                          unchanged). Copies the CPU-resident experts into
+#                          pinned RAM instead of mmap-ing the GGUF, so the
+#                          per-microbatch expert uploads to the GPU are real
+#                          DMA. llama-server itself warns at startup to do this
+#                          when tensor overrides to CPU are used with mmap.
+#                          Costs ~100 GB of anonymous RAM (376 GB on the box)
+#                          and a slower cold start. Measured 2026-10-17, see
+#                          llama.cpp/reports/MoE cache A-B results 2026-10-17.md
+#   build-upstream         llama.cpp b11713 (2744e48d1) vs the previous b11053:
+#                          +39% decode, +7% prefill in llama-bench on identical
+#                          flags (tg128 11.48 -> 15.92).
+#
+#   taskset node 1         --numa isolate pins to whichever node the process
+#                          STARTS on. Measured 2026-10-17 (llama-bench, pinned
+#                          RAM, both GPUs): decode 15.7 tok/s on node 1 vs 11.7
+#                          on node 0 (-26%), prefill equal. Node 0 carries the
+#                          desktop and other load. So start on node 1 explicitly.
+#
+# MEASURED DEAD END — do NOT add `--moe-cache-mib` (GPU LRU cache for host
+# experts, upstream PR #29887). Slower at EVERY size that fits in VRAM here:
+# 2 GiB -> 4.7 tok/s, 4 GiB -> 7.9, 6 GiB -> 10.2, vs 15.9 with no cache; still
+# 13.4 with pinned RAM and a single GPU on its own NUMA node at a 60% hit rate.
+# Prefill unaffected (cache is bypassed above 32-token batches).
+#
 # KV cache stays f16 — quantised KV (-ctk/-ctv) is unverified on this hybrid
 # Gated-DeltaNet architecture — and now lives in VRAM.
 #
@@ -77,9 +102,11 @@
 set -euo pipefail
 
 PORT="${1:-58123}"
-LLAMA_BIN="${LLAMA_BIN:-/home/ola/dev/rnd/llama-cpp/llama.cpp/build-new/bin/llama-server}"
+LLAMA_BIN="${LLAMA_BIN:-/home/ola/dev/rnd/llama-cpp/llama.cpp/build-upstream/bin/llama-server}"
 HF_REPO="${HF_REPO:-unsloth/Qwen3.8-Flash-Next-GGUF:UD-Q4_K_XL}"
 ALIAS="${ALIAS:-qwen3.8-flash-next-UD-Q4_K_XL}"
+# cpus of NUMA node 1 (node0 = 0-9,20-29; node1 = 10-19,30-39); see header
+NODE1_CPUS="${NODE1_CPUS:-10-19,30-39}"
 
 [ -x "$LLAMA_BIN" ] || { echo "llama-server not found/executable at $LLAMA_BIN" >&2; exit 1; }
 
@@ -91,7 +118,7 @@ fi
 echo "serving ${HF_REPO} on 127.0.0.1:${PORT}"
 echo "(first load pages ~105 GiB from disk; subsequent starts are warm)"
 
-exec "$LLAMA_BIN" \
+exec taskset -c "$NODE1_CPUS" "$LLAMA_BIN" \
   -hf "$HF_REPO" \
   --alias "$ALIAS" \
   --numa isolate -t 10 \
@@ -99,4 +126,5 @@ exec "$LLAMA_BIN" \
   -ot 'per_layer_token_embd=CPU' \
   -c 131072 -fa auto --jinja \
   -b 2048 -ub 2048 \
+  --load-mode none \
   --host 127.0.0.1 --port "$PORT"
