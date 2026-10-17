@@ -36,7 +36,7 @@
 #                          when tensor overrides to CPU are used with mmap.
 #                          Costs ~100 GB of anonymous RAM (376 GB on the box)
 #                          and a slower cold start. Measured 2026-10-17, see
-#                          llama.cpp/reports/MoE cache A-B results 2026-10-17.md
+#                          docs/development/2026-10-17_moe-cache-ab-and-server-switch.md
 #   build-upstream         llama.cpp b11713 (2744e48d1) vs the previous b11053:
 #                          +39% decode, +7% prefill in llama-bench on identical
 #                          flags (tg128 11.48 -> 15.92).

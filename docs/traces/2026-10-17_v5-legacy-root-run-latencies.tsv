@@ -1,0 +1,91 @@
+# n=90 median 152.7 s  mean 214.9 s  min 25.4  max 1587.5
+25.4	56564967-6788-46fe-b6b5-d324fcbd0e16	What serial number is recorded for device sea-dc1-leaf04?
+33.3	a2b01410-3d59-4163-8e54-a2a86c25369a	Which rack holds device hq-acc04, and at which rack unit is it mounted?
+34.8	02db0e68-5181-4816-9433-28fc185b4620	Which provider networks are defined in NetBox, and which provider owns each one?
+42.2	c8d6d9b2-e91c-4104-82a6-9008d51892f8	How many devices belong to tenant Dunder-Mifflin, Inc.?
+43.1	796f5479-5b4d-4b34-8f1b-03cd889f4be2	How many devices are recorded at site HVL-SEA-DC1? Include every device status and report a single number.
+43.9	5324f8fd-d0cf-4739-9017-2fee58e15069	How many sites belong to tenant Dunder-Mifflin, Inc.?
+47.5	81e42a80-14e9-4098-908b-9ca2202182f2	How many IP prefixes are scoped to site HVL-SEA-HQ?
+50.5	2150d293-272d-4a9b-9137-3b47ae03930b	List the names of every rack at site HVL-SEA-DC1.
+52.1	88f3e406-3eb7-48e0-9372-522f0137ac22	List the names of every device at site HVL-POR-BR02.
+52.3	1409ad79-f555-4abd-a358-676a0bbe1abd	Does cluster HVL-SEA-HQ-EDGE have any virtual machines assigned, or is it unused?
+54.0	284e144e-1c58-46fe-919b-f66dcbb3f0db	Which power feeds does panel DC1-PP-A supply? List them by name.
+54.2	3322d4e3-c012-4d5f-a7ba-a4688ca0c2fe	Is rack DC1-R04 empty, or does it hold mounted devices?
+54.3	036d683b-2339-46ee-b029-bb77ac4512c3	Which IP aggregates are registered under RFC 1918, and which aggregate is registered under a different RIR?
+55.7	89fd1a38-6319-47fb-bca8-7bc33bff113a	Device hq-acc02 has cabling recorded against it in NetBox. What lifecycle status does NetBox record for the device, and what does that status indicate about its intended state?
+57.0	0e81897b-60f2-4eb7-add7-0d9c2cd15776	Across the whole change log, which action accounts for the updates to devices, and how many device updates are recorded?
+57.5	e8e85641-5f23-4675-86e3-85d5a6f5648f	NetBox has two tenant groups. Which one holds the most tenants, and how many does it hold?
+57.9	daef47ce-4c22-4459-955d-bf62bf7c6c16	Which IP addresses are assigned inside the VRF named HVL-GUEST?
+60.0	741ae014-d3c5-4c21-8911-bb9ee83576d0	How many power outlets does each Halvorsen Logistics PDU provide, and how many PDUs are there?
+61.3	8e97358f-e21a-449c-99f4-d4c8c0e5363f	How many rack reservations exist in NetBox, and how many of them belong to Halvorsen Logistics?
+63.3	91a0cd43-27f1-483a-88ab-e9813e1d1df4	Are all Halvorsen Logistics virtual machines in the active state? Name any that are not, and give each one's status.
+66.5	4705eeee-776c-44de-b9c8-ce351b009940	How many circuits does provider Evergreen Networks supply to tenant Halvorsen Logistics?
+70.6	4c2acaa0-f294-40b5-964a-314e69e76ed6	Do any Halvorsen Logistics virtual machines have a role assigned to them?
+71.3	fd03dbf2-f72b-4d7d-b298-c704258ee2b9	Which contacts are attached to site DM-Scranton, and what role does each hold?
+73.9	46c7a8be-2e16-4939-953e-24e8023733b2	Which access switches at site HVL-SEA-HQ are in the active state? List them by name.
+82.2	eefb2708-b9e0-4723-b544-0fd0b3f8c517	Do all Halvorsen Logistics circuits have two terminations recorded? Name any that have only one.
+90.2	7849e772-5575-4e44-b76e-53c52ccea7cc	Which circuit type is used by the most circuits in NetBox, and how many circuits use it?
+93.3	6ff9df60-9a15-4f24-bb68-5a2f029a631a	How many Dunder-Mifflin sites have a VLAN with VID 100 defined?
+98.2	9251ec92-e3a3-4fe0-9403-52a358d80d3f	Which providers supply circuits to tenant Dunder-Mifflin, Inc., and how many does each supply?
+102.3	bc0d2f85-92f7-4bc6-a964-1cd1e39fb9c4	Which sites belonging to tenant Dunder-Mifflin, Inc. have no racks defined?
+105.1	f4dd21cb-5b24-4996-932c-d7a00d3b1edb	Do all tenants in NetBox have at least one site? Name any that have none.
+105.7	f19e1ff6-bd2a-43b3-89bc-f7899a48ef0b	Which operating-system platforms are recorded on Halvorsen Logistics virtual machines, and how many VMs run each?
+108.9	733db1f5-7453-40e0-82bd-277fd1895d5a	Which contacts are assigned the Billing role in NetBox?
+116.8	7204b0e7-6a16-429d-9c68-d692f0862d5f	At site HVL-SEA-DC1, which rack holds the most mounted devices? Name the rack and give its device count.
+117.3	5a0960ff-3c7a-418c-b65f-91ed5a726e34	Outside the Halvorsen data centre, is any rack anywhere in NetBox reserved with a note warning that it must not be used?
+117.5	59e6e851-fdb5-4c7e-adf0-0fba13db190e	How many Halvorsen Logistics prefixes have no VLAN associated with them?
+118.1	a267ec1f-cd96-4917-adf7-d11c5b15a54c	Which device platforms have at least one device assigned to them?
+118.4	33b9b4d6-6f88-42d7-89a3-7426852acf55	According to the change log, was any Halvorsen Logistics device other than the access point por-br02-ap01 ever deleted?
+125.7	5dd97680-a36d-47ee-8cec-129691945b89	In the NetBox change log, compare these four object types -- interfaces, IP addresses, devices and cables. Which of the four has the most change records, and roughly how many?
+128.4	fb1807fa-2eeb-4c6a-85e5-4508eb0be75d	Which VRFs contain exactly 30 IP addresses each? List them by name.
+128.4	4282822c-4ec5-4b37-b277-6341664bba12	How many Halvorsen Logistics virtual machines have no network interface at all, and which are they?
+129.4	2a95abdc-94c0-4a26-bf0c-a0051d2c69dc	One tenant has VLANs defined but owns no devices, racks or prefixes at all. Which tenant is it, and how many VLANs does it have?
+144.3	87136319-45c2-40ab-8d08-0cdc98f82bee	Which VLAN group has the highest utilization figure recorded in NetBox, and is that figure closer to full or nearly empty?
+144.7	737e5374-9d4a-4b85-895b-61ca85895317	How many change-log records does NetBox hold for device hq-acc02?
+148.4	60eeb200-730b-4ef3-965a-02ea7015462c	Which user accounts other than seeder appear against entries in the NetBox change log?
+150.5	007298ad-0cea-4287-908d-f3f09fdae621	Which circuits in NetBox are of the Point-to-point circuit type?
+155.0	0b4d68a9-0d92-4e55-a706-5e12a0cc9aeb	The power feeds at HVL-SEA-DC1 and those at HVL-SEA-HQ are provisioned to different electrical specifications. Describe the difference and what it reflects about the two sites.
+157.5	a559f0d1-8db9-4d32-89b6-a03dd75fb1b0	The change log holds 22 deletion records. What single event do they describe, and which device was removed?
+158.7	5870e866-d02f-44b1-b51e-2b1b54a96538	Which virtualization platform does cluster HVL-SEA-HQ-EDGE run on, and do the other two Halvorsen Logistics clusters use the same one?
+161.0	c99c777c-455f-4625-852c-5d790db1050d	Which Halvorsen Logistics circuits are not in the active state? Give each circuit ID and its status.
+163.4	84a408b5-cc88-479d-b727-895023c96854	Which tenant is the only one in NetBox that owns virtual machines?
+164.3	2311648c-93d6-4087-8ed5-e84640d1d761	What is the total vCPU count across all Halvorsen Logistics virtual machines, and how much of that belongs to the production cluster?
+165.6	f2ba0a72-11b5-41ba-b233-ad65635a7f14	Which user account is recorded as having made the change-log entries in this NetBox instance?
+168.7	e47168aa-ed61-4d42-b3d5-e18cdd97f02a	Two rack reservations block capacity in the Halvorsen data centre. Which racks do they cover, how many units does each hold back, and why?
+170.2	75863532-4dea-4a80-b011-57fb8e24b9aa	How much total disk is provisioned across all Halvorsen Logistics virtual machines?
+171.8	37af5b0a-9233-4159-bf60-ff088d3e9d38	Outside the data-centre VLAN group, do any Halvorsen Logistics VLAN groups contain a quarantine VLAN?
+173.8	ae020fea-c541-4373-94c8-15a9defa444e	Comparing the two tenants that own circuits, does Dunder-Mifflin or Halvorsen Logistics have more circuits, and how many providers does each use?
+203.5	ca238c52-8e72-49bf-8a3c-1e5c9578025c	Counting only devices that carry the NC State University tenant, how do NC State's rack and device totals compare, and what does that imply about the build state?
+207.8	46c8e86f-9ccc-4f2c-bbb1-e92802defc93	Is there any Halvorsen Logistics site that has no router assigned to it?
+216.7	3ec1127b-add4-452a-b74b-6e8fdd7b6e54	Which devices belonging to tenant Dunder-Mifflin, Inc. have a serial number recorded in NetBox?
+217.3	5496c8b7-2c35-4598-88f6-dfb71ab3a102	No device at site HVL-BOI-BR04 appears in a list of active Halvorsen Logistics devices. Explain why, naming the devices and the states involved.
+223.5	f117e0a7-5ea7-48a7-a430-bfd541e445a6	An active Halvorsen Logistics prefix is nested inside another active prefix that is not marked as a container. Name both prefixes and the site the outer one covers.
+226.2	8d87b1fd-0d87-4f27-890f-2dc9e4a70c75	How many devices sitting at Dunder-Mifflin sites are not assigned to any tenant, and what kind of device are they?
+230.2	a1ef5294-cbee-4c0f-9ef1-5e7786ad0936	Are there any tenants in NetBox that belong to neither of the two tenant groups?
+231.5	d2bf6874-2a3e-4fd8-ae07-1879b66ea5d2	Ignoring wireless access points, which Halvorsen Logistics device is not assigned to a rack?
+233.3	7c964eac-0c6b-4e44-a9f3-594930b0ce53	Do the Halvorsen Logistics branch sites have power panels modelled in NetBox, or are panels recorded only at the larger sites? Name the panels that exist.
+235.6	dc55ff55-9a9a-4488-b18d-3defd985db4b	Which Halvorsen Logistics circuit has a decommissioned status while retaining both of its terminations, and which customer site does it terminate at?
+242.1	cd800526-b5cd-4b08-bfa0-bb51bd0200b1	Which Halvorsen Logistics hypervisor hosts have no virtual machines assigned to them? List them by name.
+250.0	7e2fea2a-cb8c-4794-be77-3c3f4df8ffef	Most singly-terminated circuits in NetBox are internet-style services where no far end is modelled. One Halvorsen circuit does not fit that pattern. Which is it, and why is it the odd one out?
+250.2	cee31dd5-889d-4a68-8175-191f1540da2b	Which change-log action is recorded least often across the instance, and how many records does it have?
+275.6	15329d03-5255-45c3-8a4f-a34af553ad13	Which sites belonging to tenant Dunder-Mifflin, Inc. have no devices recorded at all?
+301.1	c279bbd5-82b3-46c1-83c9-a3ef77760b29	How many Halvorsen Logistics virtual machines have no primary IP address, and which of them is not even assigned to a host device?
+312.3	aa1b1424-4f11-4b97-8399-545b82082d24	NetBox holds a large number of Google Cloud clusters. Do any of them host virtual machines?
+318.2	640610a2-79e9-45a7-8389-7cd0ae39acfc	NC State University and Jimbob's Banking & Trust are both incomplete in NetBox, but in opposite ways. Explain what each one is missing.
+335.3	aa6ad30d-15ee-465b-acdf-c2176f32f1ba	Counting every site in the instance regardless of tenant, how many hold no devices at all, and which are they?
+349.1	19fd9c2b-992d-44a8-ba26-456b552c65e8	Which Halvorsen Logistics power feeds are not in the active state, and which rack does each serve?
+351.5	d57affb4-e5b5-46cd-8187-f962ffc91a6f	Excluding patch panels and PDUs, which active Halvorsen Logistics devices have no primary IP address assigned? List them by name.
+360.6	21613829-3829-4dd2-86c0-5f8e86bc43b1	Each Halvorsen Logistics hypervisor host has two power supplies. Which host has exactly one of its two supplies connected to a PDU outlet, and which outlet is it?
+361.1	89e006f4-9511-4b81-acc8-d2f335e51d1b	One Halvorsen Logistics IP address carries a mask that disagrees with the prefix containing it. Which address is it, which prefix contains it, and which device interface holds it?
+379.4	7abcc033-0a1c-4a36-b11b-4afc0adbb28e	Which prefixes belonging to Halvorsen Logistics have no tenant assigned to them?
+405.4	3361d565-fba8-4cfd-8363-3870e7c1ec22	Do any Halvorsen Logistics branch sites have a firewall, or are firewalls confined to the larger sites? Name the firewalls and where they sit.
+436.2	8ce005fc-45bb-4155-bf65-ea1464dbe920	Comparing the power feeds at the Halvorsen data centre with those serving NC State's racks, which estate has more feeds and how do their electrical ratings differ?
+500.0	191eadee-6105-4c82-9f25-c22afb152e82	Across all Halvorsen Logistics PDUs, how many of the available power outlets are actually in use?
+549.6	e419f8a5-cda7-4461-af6c-7ee3c1d3408e	Across the whole instance, how many devices carry no tenant at all, and at which tenants' sites do they sit?
+573.4	71574b95-6696-4607-85ee-c93700fe55b9	Which Halvorsen Logistics PDUs have any outlet in use, and how many outlets are in use on each?
+624.6	69667963-b2ce-44b8-a2ac-5afe8f816f86	The uplink on hq-acc04 does not reach its distribution switch, while the matching uplink on hq-acc03 does. Trace both and explain what differs.
+673.6	4cd58d0b-4bb6-47b8-aab2-50033977a8ad	Do any Halvorsen Logistics PDUs draw power from a modelled power feed, or is the upstream connection missing?
+680.4	21626f46-d68d-49df-8ab5-d1b035736e65	Which single circuit has the most change-log records, how many does it have, and what kind of changes are they?
+710.4	c7b542d2-a702-42d1-aa7c-a454041c18e3	One Halvorsen Logistics cable has lost the equipment on one of its two ends, yet the cable record remains in NetBox. Which port is attached to the end that survives?
+725.6	f19f7899-87ae-4b45-bc48-8d5de06d7d55	Excluding patch panels and PDUs, which Halvorsen Logistics devices have no primary IP address assigned? Count every status, not just active ones, and list them by name.
+1587.5	39e2a3c8-681a-434e-9a2e-8c5e097f185f	Some Halvorsen Logistics IP addresses sit outside every prefix defined in their own VRF. Which addresses are they, and which device holds each one?

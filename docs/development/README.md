@@ -13,6 +13,23 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-17: MoE expert cache A/B, server switch to b11713 + `--load-mode none`, v5 subset rerun](2026-10-17_moe-cache-ab-and-server-switch.md)
+**Measurement (llama-bench + production server + agent rerun):** llama.cpp's new `--moe-cache-mib` GPU expert cache is slower than no cache at every VRAM-feasible size on this host; the wins were a newer build, pinned-RAM weight loading and starting on NUMA node 1.
+**Key points:**
+- Cache: 15.9 tok/s without, 4.7 / 7.9 / 10.2 at 2 / 4 / 6 GiB; socket locality worth 1%, the miss path is the cost. Recorded as a dead end in `scripts/serve_qwen4exp.sh`.
+- `--load-mode none`: prefill 189 → 390 tok/s in llama-bench, 97 → 219 tok/s aggregate on real agent traffic (server `print_timing` lines, 24-day legacy log vs new). Decode 13.6 → 14.6.
+- `--numa isolate` pins to whichever node the process starts on; node 1 decoded 15.7 vs 11.7 on node 0, so the script now starts under `taskset -c 10-19,30-39`.
+- Eight v5 questions rerun (`...-v5-newbuild-subset-a155acd7`): 8/8 correct, 35.7 → 28.5 s per LLM call; summed wall only 1.09× because the model planned more tool calls.
+- Raw llama-bench tables in `docs/traces/2026-10-17_llama-bench_moe-cache-ab.md`; legacy per-question latencies in `docs/traces/2026-10-17_v5-legacy-root-run-latencies.tsv`.
+
+### [2026-10-17: MoE offloading research — colibri, comparable tools, and ~55 papers against this agent's latency profile](2026-10-17_moe-offloading-research.md)
+**Research report (sourced):** whether expert-offloading tooling could cut the agent's latency. Verdict: skip colibri (NVMe streaming for models that exceed RAM; this one is RAM-resident), every offloading technique acts on decode while the worst turns are prefill, and the levers with measured payoff are fewer round trips, smaller tool results, GPU/NUMA affinity and slot save/restore.
+**Key points:**
+- Turn anatomy from the project's own traces: ~5.6 sequential LLM calls, 97.9% of wall inside the model, ~85% of prompt tokens cache-served; a 1.5× decode gain is worth ~18 s of a 167 s turn.
+- Tool landscape: KTransformers needs AMX (absent on Cascade Lake); ik_llama.cpp, MoE-Infinity, PowerInfer, Fiddler cannot run `qwen4exp` or Turing; vLLM/Ollama have no merged offload.
+- Literature: learned prefetchers gain ~1.09× over plain LRU inside llama.cpp (ProMoE); oracle beats LRU by 13 points of hit rate at 13% residency; prefill is untouched by every cache.
+- Led directly to the A/B above.
+
 ### [2026-10-06: `__in` is silently ignored by NetBox — removed from the validator and the skill](2026-10-06_in-lookup-silently-ignored.md)
 **Correction (validator + skill + docs + local MCP server copy):** `<field>__in` is not an error on NetBox 4.3, it is a no-op that returns the unfiltered set; the only multi-value syntax is a list on the bare key.
 **Key points:**
