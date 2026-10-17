@@ -88,3 +88,19 @@ index 96ae4870f..1992b2adc 100644
      }
  };
 ```
+
+## Addendum: kernel.numa_balancing=0 (2026-10-17, evening)
+
+Five 200-token generations on the running server (pinned to node 1, weights node-local), same
+prompts each time:
+
+| state | median tok/s | range |
+|---|---|---|
+| numa_balancing=1 | 14.45 | 14.13-14.86 |
+| numa_balancing=1, repeated | 14.65 | 14.65-14.80 |
+| numa_balancing=0 | 14.72 | 14.67-14.80 |
+
+No material effect: +2% median, inside the spread of the two runs taken with the setting on.
+With the process already pinned and its memory already on the same node, the balancer had
+nothing to fix and apparently little to cost. Left off (harmless, and llama-server warns about
+it), but not persisted across reboots; nothing in the serve script depends on it.
