@@ -21,6 +21,7 @@ This directory contains:
 - `--numa isolate` pins to whichever node the process starts on; node 1 decoded 15.7 vs 11.7 on node 0, so the script now starts under `taskset -c 10-19,30-39`.
 - Eight v5 questions rerun (`...-v5-newbuild-subset-a155acd7`): 8/8 correct, 35.7 → 28.5 s per LLM call; summed wall only 1.09× because the model planned more tool calls.
 - Raw llama-bench tables in `docs/traces/2026-10-17_llama-bench_moe-cache-ab.md`; legacy per-question latencies in `docs/traces/2026-10-17_v5-legacy-root-run-latencies.tsv`.
+- Full 90-question v5 rerun (`...-v5-newbuild-full-2865e34b`, trace `docs/traces/2026-10-17_netbox-benchmark-v5_newbuild-full.md`): wall 6.78 → 5.30 h, agent time 1.34× (advanced tier 1.53×), correctness 0.906 → 0.922, tool calls 5.52 → 4.88, 40.8 → 33.9 s per model call. Attributed to the server change, not ADR-0041's `__in` fix (8 uses in 5 questions in September; October read more tool text and was still faster).
 
 ### [2026-10-17: MoE offloading research — colibri, comparable tools, and ~55 papers against this agent's latency profile](2026-10-17_moe-offloading-research.md)
 **Research report (sourced):** whether expert-offloading tooling could cut the agent's latency. Verdict: skip colibri (NVMe streaming for models that exceed RAM; this one is RAM-resident), every offloading technique acts on decode while the worst turns are prefill, and the levers with measured payoff are fewer round trips, smaller tool results, GPU/NUMA affinity and slot save/restore.

@@ -104,3 +104,48 @@ No material effect: +2% median, inside the spread of the two runs taken with the
 With the process already pinned and its memory already on the same node, the balancer had
 nothing to fix and apparently little to cost. Left off (harmless, and llama-server warns about
 it), but not persisted across reboots; nothing in the serve script depends on it.
+
+## Full 90-question v5 rerun on the new configuration (2026-10-17/18)
+
+Harness: `EVAL_MODELS=llamacpp:qwen3.8-flash-next-UD-Q4_K_XL EVAL_VARIANT=newbuild-full
+EVAL_FORCE_RERUN=1 EVAL_MAX_CONCURRENCY=1 python -m tests.eval.run_matrix_v5`. Experiment
+`llamacpp-qwen3.8-flash-next-UD-Q4_K_XL-v5-newbuild-full-2865e34b`; scored trace in
+`docs/traces/2026-10-17_netbox-benchmark-v5_newbuild-full.md`. Server: build b11713,
+`--load-mode none`, taskset node 1, `kernel.numa_balancing=0`. Compared against the 2026-09-23
+run `...-v5-kvvram-full-31701ffc` (same dataset, same evaluators, same judge), root-run
+latencies from LangSmith.
+
+| | September (old build, mmap) | October (new config) |
+|---|---|---|
+| wall, first start to last end | 6.78 h | **5.30 h** |
+| agent time, sum of 90 root runs | 19,345 s | **14,396 s** (1.34x) |
+| mean / median / max per question | 214.9 / 152.7 / 1,588 s | **160.0 / 119.9 / 761 s** |
+| simple tier, mean | 108.5 s | 96.7 s (1.12x) |
+| medium tier, mean | 205.9 s | 167.6 s (1.23x) |
+| advanced tier, mean | 330.5 s | **215.6 s (1.53x)** |
+| questions faster than September | - | 73 of 90 |
+| correctness | 0.906 | **0.922** (5 up, 4 down) |
+| completeness | 0.944 | 0.944 |
+| entity coverage (n=71) | 0.866 | 0.859 |
+| tool calls per question | 5.522 | **4.878** |
+| root-run errors | 0 | 0 |
+| model calls / seconds inside the model | 462 / 18,869 s | 411 / 13,938 s |
+| seconds per model call | 40.8 | **33.9** |
+| ms per prompt token (incl. cached) | 2.77 | **2.12** |
+
+Reading: the per-call gain (1.20x) is the server change; the rest of the 1.34x comes from the
+model making 11% fewer calls this time, which is run-to-run planning variance in the same
+direction. The advanced tier gains most because its turns prefill the largest tool results.
+Correctness movement is nine questions in both directions, i.e. judge and planning noise around
+the same ~0.91 level, not a quality change. The September 26-minute outlier (IP addresses
+outside every prefix) took 761 s this time.
+
+**Attribution: the server change, not ADR-0041.** The September run predates the `__in`
+rejection (2026-10-06), so both are in the October run. They act on different quantities. In
+September the model used `__in` in 8 of 497 tool calls across 5 questions, 3 of them returning
+the oversized unfiltered result; October used it 0 times. Yet October read *more* tool text, not
+less: 61 tool results over 20k characters vs 45, 6.2M vs 4.9M characters in total. The rates
+only the server can change moved (40.8 -> 33.9 s per model call, 2.77 -> 2.12 ms per prompt
+token), and 73 of 90 questions got faster while the fix could touch at most 5. The one entangled
+quantity is the call count (462 -> 411), where the fix is a bounded contributor on those 5
+questions and run-to-run planning variance is the rest.
