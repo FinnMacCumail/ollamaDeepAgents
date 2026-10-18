@@ -306,6 +306,45 @@ and IP prefix assignments":
   paginate if `next` is non-null
 - Total: 3-4 tool calls (with pagination), not 14×3=42
 
+## UNASSIGNED RELATIONS — "no tenant", "no role", "no primary IP"
+
+The only filter NetBox honours for "objects with no `<relation>` assigned" is the bare
+id key with a null value. Everything else either comes back UNFILTERED (a silent wrong
+answer, the `__in` class of bug) or returns the complement.
+
+```python
+# RIGHT — devices with no tenant (verified live 2026-10-18: 15 of 141)
+netbox_get_objects("dcim.device", filters={"tenant_id": None}, fields=["id", "name", "site"])
+# same shape for any relation: {"role_id": None}, {"primary_ip4_id": None}, {"vrf_id": None} (global table)
+
+# WRONG — all four looked plausible and all four were tried in the v5 runs
+filters={"tenant__empty": "true"}    # SILENTLY IGNORED -> 141 of 141 (the whole table)
+filters={"tenant__isnull": "true"}   # SILENTLY IGNORED -> 141 of 141
+filters={"tenant__null": "true"}     # rejected by the validator (no such suffix)
+filters={"tenant__n": None}          # the COMPLEMENT: devices that HAVE a tenant (126)
+```
+
+The validator now rejects `<relation>__empty` and `<relation>__n: null` with the correct
+form in the message. For "has no primary IP" NetBox also offers `{"has_primary_ip": "false"}`.
+
+## TENANTS OWN CIRCUITS; PROVIDERS SUPPLY THEM
+
+A tenant name is never a provider name. In both v5 runs every "`<tenant>`'s circuits"
+question spent three calls discovering this: `circuits.provider {"name": "Halvorsen
+Logistics"}` → empty → `{"name__ic": ...}` → empty → `{}` (all providers).
+
+```python
+# RIGHT — circuits owned by a tenant: resolve the tenant once, filter circuits by tenant_id
+tenant = netbox_get_objects("tenancy.tenant", filters={"name__ic": "halvorsen"}, fields=["id", "name", "slug"])
+netbox_get_objects("circuits.circuit", filters={"tenant_id": 14}, fields=["id", "cid", "provider", "type", "status"])
+
+# WRONG — looking the tenant up as a provider
+netbox_get_objects("circuits.provider", filters={"name": "Halvorsen Logistics"})   # 0 results, always
+```
+
+When an exact `name` filter returns 0, do ONE `netbox_search_objects` or ONE `name__ic`
+retry — never fall through to an unfiltered fetch of the whole type.
+
 ## TENANCY INHERITANCE IS NOT AUTOMATIC
 
 Objects in NetBox do NOT automatically inherit their parent's tenant. Filtering
@@ -367,10 +406,17 @@ These NetBox API features rarely surface in tutorials but solve common problems:
   (patch panels, MPO breakouts) until it hits a real endpoint. The right way to ask
   "what's actually on the other end of this cable" — REST-only, no GraphQL equivalent.
 
-- **Containment filters on prefixes:**
+- **Containment filters on prefixes (`ipam.prefix` ONLY):**
   - `?within=10.0.0.0/8` — prefixes strictly inside 10/8
   - `?within_include=10.0.0.0/8` — prefixes inside 10/8, including 10/8 itself
   - `?contains=10.4.5.6` — prefixes that contain a specific IP or CIDR
+
+- **IP addresses inside a prefix use `parent`, not `within`:**
+  `netbox_get_objects("ipam.ipaddress", filters={"parent": "10.0.0.0/8"})`.
+  On `ipam.ipaddress`, `within` is **silently ignored** (verified live 2026-10-18: 616 of
+  616 addresses came back) and `without` is a 400; the validator now rejects both.
+  Likewise `vrf=` on ipam objects takes the route distinguisher and 400s on a VRF name —
+  resolve the VRF on `ipam.vrf` and filter with `vrf_id` (`{"vrf_id": None}` = global table).
 
 - **`?q=<term>` per-model search** — different from the cross-model `netbox_search_objects`
   tool. Per-model `?q=` is narrower and faster when you already know the type.
@@ -391,12 +437,12 @@ What they mean:
 
 | Suffix | Use for | Example |
 |---|---|---|
-| `n` | negation (not equal to) | `{"role_id__n": 4}` (role NOT 4) |
+| `n` | negation (not equal to) | `{"role_id__n": 4}` (role NOT 4). **Never `{"tenant__n": null}`** — that returns the objects that HAVE a tenant (verified live: 126 of 141) |
 | `ic` / `nic` | (not) case-insensitive contains | `{"name__ic": "switch"}` |
 | `isw` / `nisw` | (not) case-insensitive starts-with | `{"name__isw": "core-"}` |
 | `iew` / `niew` | (not) case-insensitive ends-with | `{"name__iew": "-01"}` |
 | `ie` / `nie` | (not) case-insensitive exact | `{"name__ie": "Router01"}` |
-| `empty` | is null/empty | `{"serial__empty": "true"}` |
+| `empty` | string field is empty — **STRING FIELDS ONLY** | `{"serial__empty": "true"}`. On a relation (`tenant__empty`, `site__empty`) it is **silently ignored** — the UNFILTERED set comes back (verified live: 141 of 141). See UNASSIGNED RELATIONS below |
 | `regex` / `iregex` | regex match (case-sensitive / -insensitive) | `{"name__iregex": "^core-.*-01$"}` |
 | `lt` / `lte` / `gt` / `gte` | numeric / datetime comparisons | `{"created__gt": "2026-05-01T00:00:00Z"}` |
 

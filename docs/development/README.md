@@ -13,6 +13,15 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-18: After `__in` — four more filters NetBox ignores, inverts or rejects](2026-10-18_filter-naming-after-in.md)
+**Correction (validator + GraphQL pre-check + skills + prompt):** mined both 90-question v5 runs for wasted tool calls and verified each suspect filter live. "No X assigned" is `{"<x>_id": None}` only (`__empty`/`__isnull` silently ignored, `__n: null` inverted); `within` on ip-addresses silently ignored (`parent` is the filter); `vrf` wants an RD; the GraphQL skill was teaching an ID-list form NetBox 4.3.3 rejects.
+**Key points:**
+- 41 of 439 October tool calls (9%, ~23 min) were spent on these; GraphQL grammar errors were half of them.
+- Validator now rejects `<relation>__empty`, `<relation>__n: null`, ip-address containment keys and `vrf`, each with the working form in the message; recovery middleware gained matching strategies.
+- `netbox_graphql` rejects `filter:`, `limit:`, list/lookup/null on ID keys and >10 aliases before the HTTP round trip.
+- Skills: ID-list claim reversed, new *UNASSIGNED RELATIONS* and *TENANTS OWN CIRCUITS* sections.
+- Gate: session harness, same ladder as 2026-10-06 (`docs/traces/2026-10-18_netbox-session_filter-naming.*`): 0 validation errors, 9.5/10 vs 7.0/10 correct, 1,444 s vs 1,312 s on 36 vs 20 calls (planning variance, turn 6).
+
 ### [2026-10-17: MoE expert cache A/B, server switch to b11713 + `--load-mode none`, v5 subset rerun](2026-10-17_moe-cache-ab-and-server-switch.md)
 **Measurement (llama-bench + production server + agent rerun):** llama.cpp's new `--moe-cache-mib` GPU expert cache is slower than no cache at every VRAM-feasible size on this host; the wins were a newer build, pinned-RAM weight loading and starting on NUMA node 1.
 **Key points:**

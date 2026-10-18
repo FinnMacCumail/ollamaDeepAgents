@@ -44,6 +44,20 @@ n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gt
 `docs/development/2026-10-06_in-lookup-silently-ignored.md`). Multi-value is the bare key
 with a list value: `{"device_id": [149, 150]}`.
 
+Three more rules of the same kind (verified live 2026-10-18, see
+`docs/development/2026-10-18_filter-naming-after-in.md`):
+- **"No `<relation>` assigned" is `{"<relation>_id": None}` only.** `<relation>__empty` and
+  `__isnull` are silently ignored (unfiltered set); `<relation>__n: None` returns the
+  complement. The validator rejects both with the `_id: null` form in the message
+  (`RELATION_FIELDS` lists the relation names it recognises; any `*_id` key also counts).
+- **On `ipam.ipaddress`, `within`/`within_include`/`without`/`contains` are rejected** (the
+  first is silently ignored by NetBox, the rest 400); addresses inside a prefix use `parent`.
+  `vrf` on ipam types is rejected (it wants the route distinguisher); use `vrf_id`.
+- **GraphQL** (`src/tools/netbox_graphql.py`, `_validate_filter_grammar`): the argument is
+  `filters:`; ID keys take ONE bare id (a list or lookup object is a NetBox error);
+  `<x>_id: null` is silently ignored; `limit:`/`offset:` are `pagination: {...}`; at most 10
+  aliases. All rejected before the HTTP request.
+
 Rules:
 - **Relationship filters take a numeric ID or lowercase slug, never a display name.**
   `{"site_id": 5}` ✓ · `{"site": "dm-akron"}` ✓ (slug) · `{"site": "DM-Akron"}` ✗ (400).

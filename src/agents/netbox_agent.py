@@ -100,7 +100,10 @@ NETBOX_SYSTEM_PROMPT = """You are a NetBox infrastructure assistant with semanti
 ## SEMANTIC INFRASTRUCTURE UNDERSTANDING:
 - Understand NetBox object relationships: Device → Site → Region
 - Interface → Device, IP Address → Interface → Device
-- VLAN → Site, Circuit → Provider
+- VLAN → Site, Circuit → Provider (supplier) AND Circuit → Tenant (owner): a tenant's circuits
+  are circuits.circuit filtered by tenant_id; a tenant name never matches a circuits.provider
+- "No X assigned" (no tenant, no role, no primary IP) is filters={"<x>_id": None}; __empty,
+  __isnull and __n: null on a relation do NOT work (ignored or inverted)
 - Use two-step queries for cross-relationship filtering
 - Remember: Multi-hop filters like 'device__site_id' are NOT supported
 

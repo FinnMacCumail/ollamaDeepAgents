@@ -39,6 +39,13 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
             r"Invalid filter.*__startswith": "django_lookup",
             r"Invalid filter.*__endswith": "django_lookup",
             r"Invalid filter.*__in\b": "django_lookup",
+            # "no <relation> assigned" written as __empty / __isnull / __null, or as
+            # `<relation>__n: null` (which selects the complement). Only
+            # `<relation>_id: null` works. Must precede the generic __ pattern.
+            r"Invalid filter.*__(empty|isnull|null|none)\b": "null_relation",
+            r"Invalid filter.*__n with value null": "null_relation",
+            # ipam.ipaddress has no containment filters; `parent` is the one.
+            r"Invalid filter pattern: (within|within_include|without|contains)\b": "ip_parent_filter",
             r"Invalid filter.*__regex": "django_lookup",
             r"Invalid filter.*__(gt|gte|lt|lte)\b": "django_lookup",
             # Known relationship-traversal cases
@@ -141,6 +148,7 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
         # Try to extract filter pattern from error message
         patterns = [
             r"Invalid filter:\s*([^\s,]+)",
+            r"Invalid filter pattern:\s*([^\s(,]+)",
             r"filter['\"]:\s*['\"]([^'\"]+)",
             r"(\w+__\w+(?:__\w+)*)",
             # 400 Bad Request from NetBox: pull the offending querystring,
@@ -253,6 +261,34 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
                     f"Remove the lookup suffix and use exact values."
                 )
 
+        elif error_type == "null_relation":
+            field = failed_filter.split("__")[0] if "__" in failed_filter else failed_filter
+            base = field[:-3] if field.endswith("_id") else field
+            strategy["approach"] = "null_id_filter"
+            strategy["steps"] = [
+                {
+                    "description": f"Select objects with no {base} using the bare id key and a null value",
+                    "example": f'netbox_get_objects("<type>", filters={{"{base}_id": null}}, fields=[...])',
+                }
+            ]
+            strategy["explanation"] = (
+                f"'{failed_filter}' does not select unassigned objects: '__empty'/'__isnull' are "
+                f"silently ignored on relation fields (NetBox returns the unfiltered set) and "
+                f"'{base}__n': null returns the objects that HAVE a {base}. The only form NetBox "
+                f"honours is '{base}_id': null."
+            )
+        elif error_type == "ip_parent_filter":
+            strategy["approach"] = "parent_filter"
+            strategy["steps"] = [
+                {
+                    "description": "Filter IP addresses inside a prefix with 'parent'",
+                    "example": 'netbox_get_objects("ipam.ipaddress", filters={"parent": "<cidr>"}, fields=["id", "address"])',
+                }
+            ]
+            strategy["explanation"] = (
+                f"'{failed_filter}' is an ipam.prefix containment filter; on ipam.ipaddress it is "
+                f"ignored or rejected. Use 'parent': '<cidr>' for addresses within a prefix."
+            )
         elif error_type == "relational_value_error":
             # NetBox returned 400 — most often a relational filter received a display
             # name where it needs a slug or numeric ID. Steer toward the two-step pattern.

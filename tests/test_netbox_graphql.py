@@ -295,3 +295,39 @@ async def test_tool_invocation_via_ainvoke(cfg):
     out = await tools["netbox_graphql"].ainvoke({"query": "query { device_list { name } }"})
     assert isinstance(out, dict)
     assert out["data"]["device_list"][0]["name"] == "rtr01"
+
+
+# ------------------------------------------------ filter-grammar pre-checks ---
+# Shapes the model produced in the v5 runs (20 of 31 GraphQL calls failed on
+# 2026-10-17); each is rejected before any HTTP request with the fix named.
+
+@pytest.mark.parametrize("query, needle", [
+    ('query { device_list(filter: {id: 1}) { id } }', "'filters' (plural)"),
+    ('query { device_list(filters: {id: [146, 147]}) { id } }', "ONE id, not a list"),
+    ('query { power_outlet_list(filters: {device_id: [149, 150]}) { id } }', "ONE id, not a list"),
+    ('query { device_list(filters: {site_id: {in_list: ["1"]}}) { id } }', "plain ID scalar"),
+    ('query { device_list(filters: {tenant_id: null}) { id } }', "silently ignored"),
+    ('query { device_list(filters: {OR: {tenant_id: null}}) { id } }', "silently ignored"),
+    ('query { virtual_machine_list(filters: {tenant_id: 14}, limit: 1000) { id } }', "pagination"),
+    ('query { virtual_machine_list(cluster: {name: {i_contains: "HVL"}}) { id } }', "unknown argument"),
+    ('query { ' + ' '.join(f'd{i}: device_list(filters: {{id: {i}}}) {{ id }}' for i in range(12)) + ' }',
+     "NetBox allows 10"),
+])
+async def test_filter_grammar_rejected_before_any_http(cfg, query, needle):
+    result = await execute_graphql(cfg, query, transport=_forbidden_transport())
+    assert isinstance(result, str)
+    assert result.startswith("TOOL_VALIDATION_ERROR")
+    assert needle in result
+
+
+@pytest.mark.parametrize("query", [
+    'query { device_list(filters: {id: 6}) { id name } }',
+    'query { device_list(filters: {name: {in_list: ["hq-acc02", "hq-acc04"]}}) { id } }',
+    'query { device_list(filters: {site: {id: 3}, name: {i_contains: "sw"}}, pagination: {limit: 2, offset: 0}) { id } }',
+    'query { ' + ' '.join(f'd{i}: device_list(filters: {{id: {i}}}) {{ id }}' for i in range(10)) + ' }',
+    'query { ip_address_list(filters: {parent: "10.0.0.0/8"}) { id address } }',
+])
+async def test_valid_filter_grammar_passes(cfg, query):
+    body = {"data": {"device_list": []}, "errors": None}
+    result = await execute_graphql(cfg, query, transport=_json_transport(body))
+    assert isinstance(result, dict)

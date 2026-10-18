@@ -38,7 +38,13 @@ from graphql import (
     parse,
 )
 from graphql.error import GraphQLError
-from graphql.language.ast import OperationDefinitionNode
+from graphql.language.ast import (
+    FieldNode,
+    ListValueNode,
+    NullValueNode,
+    ObjectValueNode,
+    OperationDefinitionNode,
+)
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -89,8 +95,11 @@ _EXEC_DESCRIPTION = (
     "models; that is a single-object lookup, use netbox_get_objects (resolve the "
     "object, then read its related IDs) or netbox_search_objects. Read-only: "
     "mutations are rejected. If unsure of the schema, call netbox_graphql_schema "
-    "first. NetBox filter grammar here: ID filters are bare (filters: {id: 6}); "
-    'string fields use lookup objects (filters: {name: {exact: "dmi01-nashua-rtr01"}}); '
+    "first. NetBox filter grammar here: the argument is 'filters' (plural); ID "
+    "filters take ONE bare id (filters: {id: 6}) - never a list, never a lookup "
+    "object; string fields use lookup objects (filters: {name: {exact: "
+    '"dmi01-nashua-rtr01"}} / {name: {in_list: [...]}} / {name: {i_contains: "x"}}); '
+    "paging is pagination: {limit, offset}; at most 10 aliases per document; "
     "root query fields are <model>_list (device_list, vlan_list, cable_list, ...)."
 )
 
@@ -162,6 +171,95 @@ def _validate_read_only(query: str) -> str | None:
     if depth > GQL_MAX_DEPTH:
         return f"query nesting depth {depth} exceeds the limit of {GQL_MAX_DEPTH}"
 
+    return _validate_filter_grammar(document)
+
+
+# Grammar pre-checks for mistakes the model made repeatedly in the v5 runs
+# (20 of 31 GraphQL calls failed in the 2026-10-17 run; each failure costs a
+# model round trip). Each rule is verified against NetBox 4.3.3's strawberry
+# schema on 2026-10-18. See docs/development/2026-10-18_filter-naming-after-in.md.
+GQL_MAX_ALIASES: int = 10  # NetBox: "12 aliases found. Allowed: 10"
+_LIST_FIELD_ARGS = frozenset({"filters", "pagination", "ordering"})
+
+
+def _iter_fields(selection_set):
+    """Yield every FieldNode under a selection set, depth first."""
+    if selection_set is None:
+        return
+    for sel in selection_set.selections:
+        if isinstance(sel, FieldNode):
+            yield sel
+            yield from _iter_fields(sel.selection_set)
+        elif getattr(sel, "selection_set", None) is not None:  # inline fragments
+            yield from _iter_fields(sel.selection_set)
+
+
+def _check_filter_object(obj: ObjectValueNode, where: str) -> str | None:
+    """Reject filter shapes NetBox's ID scalars do not accept or silently ignore."""
+    for f in obj.fields:
+        name = f.name.value
+        is_id_key = name == "id" or name.endswith("_id")
+        if is_id_key and isinstance(f.value, ListValueNode):
+            return (
+                f"{where}: '{name}' takes ONE id, not a list (NetBox: 'ID cannot "
+                f"represent a non-string and non-integer value'). For several objects "
+                f"use a string lookup (name: {{in_list: [...]}}), a parent filter "
+                f"(site_id, tenant_id), or up to {GQL_MAX_ALIASES} aliased queries with one id each"
+            )
+        if is_id_key and isinstance(f.value, ObjectValueNode):
+            return (
+                f"{where}: '{name}' is a plain ID scalar and takes no lookup object "
+                f"(no exact/in_list) - pass the bare id: {name}: 6"
+            )
+        if is_id_key and isinstance(f.value, NullValueNode):
+            return (
+                f"{where}: '{name}: null' is silently ignored (returns every object). "
+                f"For unassigned objects use the REST tool: "
+                f"netbox_get_objects(<type>, filters={{'{name}': null}})"
+            )
+        if name in ("AND", "OR", "NOT") and isinstance(f.value, ObjectValueNode):
+            err = _check_filter_object(f.value, where)
+            if err:
+                return err
+    return None
+
+
+def _validate_filter_grammar(document) -> str | None:
+    """Return an error message for filter-grammar mistakes NetBox would reject
+    (or silently ignore), else None. Runs before any HTTP request."""
+    n_aliases = 0
+    for defn in document.definitions:
+        if not isinstance(defn, OperationDefinitionNode):
+            continue
+        for field in _iter_fields(defn.selection_set):
+            if field.alias is not None:
+                n_aliases += 1
+            fname = field.name.value
+            if not fname.endswith("_list"):
+                continue
+            for arg in field.arguments:
+                aname = arg.name.value
+                if aname == "filter":
+                    return f"'{fname}(filter: ...)': the argument is 'filters' (plural)"
+                if aname in ("limit", "offset"):
+                    return (
+                        f"'{fname}({aname}: ...)': there is no '{aname}' argument; use "
+                        f"pagination: {{limit: <n>, offset: <n>}}"
+                    )
+                if aname not in _LIST_FIELD_ARGS:
+                    return (
+                        f"'{fname}({aname}: ...)': unknown argument; filters go inside "
+                        f"'filters: {{...}}' (e.g. filters: {{{aname}: ...}})"
+                    )
+                if aname == "filters" and isinstance(arg.value, ObjectValueNode):
+                    err = _check_filter_object(arg.value, f"'{fname}(filters: ...)'")
+                    if err:
+                        return err
+    if n_aliases > GQL_MAX_ALIASES:
+        return (
+            f"{n_aliases} aliased queries; NetBox allows {GQL_MAX_ALIASES}. Split the "
+            f"document, or filter on a parent (site_id/tenant_id) and select client-side"
+        )
     return None
 
 

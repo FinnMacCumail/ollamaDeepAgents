@@ -33,6 +33,35 @@ VALID_SUFFIXES: frozenset[str] = frozenset({
     "lt", "lte", "gt", "gte",
 })
 
+# Relation (foreign-key) filter names NetBox exposes as `<name>` (slug) and
+# `<name>_id` (pk). Used to catch "no <relation> assigned" filters that NetBox
+# does not honour. Verified live on 2026-10-18 (dcim.device, 141 total, 15 with
+# no tenant): `tenant_id=null` -> 15 (correct); `tenant__empty=true` and
+# `tenant__isnull=true` -> 141 (SILENTLY IGNORED, same class as `__in`);
+# `tenant__n=null` -> 126 (the COMPLEMENT: devices that HAVE a tenant). The
+# only form NetBox honours for "unassigned" is `<relation>_id=null`. See
+# docs/development/2026-10-18_filter-naming-after-in.md.
+RELATION_FIELDS: frozenset[str] = frozenset({
+    "tenant", "tenant_group", "site", "site_group", "region", "location", "rack",
+    "rack_role", "device", "device_type", "device_role", "role", "platform",
+    "manufacturer", "cluster", "cluster_type", "cluster_group", "virtual_machine",
+    "vrf", "vlan", "vlan_group", "prefix", "aggregate", "rir", "provider",
+    "provider_account", "provider_network", "circuit", "circuit_type", "type",
+    "group", "parent", "interface", "vminterface", "cable", "module", "module_type",
+    "power_panel", "power_feed", "power_port", "power_outlet", "primary_ip4",
+    "primary_ip6", "primary_ip", "oob_ip", "nat_inside", "nat_outside",
+    "contact", "contact_group", "contact_role", "config_template", "virtual_chassis",
+    "fhrpgroup", "l2vpn", "tunnel", "wireless_lan", "wireless_lan_group",
+})
+
+# `ipam.ipaddress` has no containment filters of its own: `within`,
+# `within_include` and `contains` belong to ipam.prefix. On ip-addresses
+# `within=<cidr>` is SILENTLY IGNORED (returns every address; verified live
+# 2026-10-18: 616 of 616) and `without` is a 400. The address-in-prefix filter
+# is `parent=<cidr>`. `vrf=` on ipam objects takes the route distinguisher,
+# not the VRF name (400 otherwise); the usable key is `vrf_id`.
+_IPADDRESS_PREFIX_ONLY_KEYS: frozenset[str] = frozenset({"within", "within_include", "without", "contains"})
+
 
 class FilterValidator:
     """Validates NetBox filters before sending to MCP server.
@@ -45,19 +74,41 @@ class FilterValidator:
     """
 
     @staticmethod
-    def validate_filter(filter_dict: dict[str, Any]) -> tuple[bool, str | None]:
+    def validate_filter(
+        filter_dict: dict[str, Any], object_type: str | None = None
+    ) -> tuple[bool, str | None]:
         """
         Validate a filter dictionary for MCP compatibility.
 
         Args:
             filter_dict: Filter parameters to validate
+            object_type: The NetBox object type being queried (e.g. "ipam.ipaddress"),
+                when known. Enables the per-type rules; omit for the
+                type-independent rules only.
 
         Returns:
             Tuple of (is_valid, error_message)
         """
-        for key in filter_dict:
+        for key, value in filter_dict.items():
             if "__" not in key:
-                continue  # bare key (e.g. site_id, name, status) — always allowed
+                # bare key (e.g. site_id, name, status) is allowed, except the
+                # ip-address containment keys NetBox ignores or rejects
+                if object_type == "ipam.ipaddress" and key in _IPADDRESS_PREFIX_ONLY_KEYS:
+                    return (
+                        False,
+                        f"Invalid filter pattern: {key} (on ipam.ipaddress '{key}' is "
+                        f"ignored or rejected - it is a prefix filter; addresses inside "
+                        f"a CIDR are filtered with 'parent': {{'parent': '<cidr>'}})",
+                    )
+                if key == "vrf" and (object_type or "").startswith("ipam."):
+                    return (
+                        False,
+                        "Invalid filter pattern: vrf (the 'vrf' filter takes the route "
+                        "distinguisher and returns HTTP 400 for a VRF name; use "
+                        "'vrf_id' with the VRF's numeric id, or 'vrf_id': null for "
+                        "addresses in the global table)",
+                    )
+                continue
 
             parts = key.split("__")
             if len(parts) != 2:
@@ -67,13 +118,31 @@ class FilterValidator:
                     f"traversal not supported — use a two-step query instead)",
                 )
 
-            suffix = parts[1]
+            field, suffix = parts[0], parts[1]
             if suffix not in VALID_SUFFIXES:
                 return (
                     False,
                     f"Invalid filter pattern: {key} (suffix '__{suffix}' is not "
                     f"on the MCP server's whitelist; allowed: "
                     f"{', '.join(sorted(VALID_SUFFIXES))})",
+                )
+
+            # "no <relation> assigned": only `<relation>_id: null` works.
+            base = field[:-3] if field.endswith("_id") else field
+            is_relation = base in RELATION_FIELDS or field.endswith("_id")
+            if suffix == "empty" and is_relation:
+                return (
+                    False,
+                    f"Invalid filter pattern: {key} ('__empty' is silently ignored on "
+                    f"relation fields - NetBox returns the UNFILTERED set; for objects "
+                    f"with no {base} use {{'{base}_id': null}})",
+                )
+            if suffix == "n" and is_relation and (value is None or str(value).lower() in ("null", "none")):
+                return (
+                    False,
+                    f"Invalid filter pattern: {key} with value null ('{key}': null "
+                    f"returns the objects that HAVE a {base} - the opposite of what "
+                    f"was asked; for objects with no {base} use {{'{base}_id': null}})",
                 )
 
         return True, None
@@ -104,6 +173,17 @@ class FilterValidator:
         equivalents — translate those directly.
         """
         if "__" not in invalid_filter:
+            if invalid_filter in _IPADDRESS_PREFIX_ONLY_KEYS:
+                return (
+                    "On ipam.ipaddress use filters={'parent': '<cidr>'} for addresses "
+                    "inside a prefix ('within'/'within_include'/'contains' are "
+                    "ipam.prefix filters and are ignored or rejected here)."
+                )
+            if invalid_filter == "vrf":
+                return (
+                    "Use filters={'vrf_id': <id>} (resolve the VRF by name on ipam.vrf "
+                    "first), or filters={'vrf_id': null} for the global table."
+                )
             return "Use a direct field filter (e.g. {'site_id': 5} or {'name': 'foo'})."
 
         parts = invalid_filter.split("__")
@@ -116,6 +196,20 @@ class FilterValidator:
             )
 
         field, suffix = parts[0], parts[1]
+        base = field[:-3] if field.endswith("_id") else field
+        is_relation = base in RELATION_FIELDS or field.endswith("_id")
+        if suffix in ("null", "isnull", "none", "empty") and is_relation:
+            return (
+                f"To select objects with NO {base} assigned, filter the bare id key "
+                f"with null: filters={{'{base}_id': null}}. '__empty' and '__isnull' are "
+                f"silently ignored on relation fields (NetBox returns the unfiltered set)."
+            )
+        if suffix == "n" and is_relation:
+            return (
+                f"'{field}__n': null returns the objects that HAVE a {base}. For objects "
+                f"with no {base} use filters={{'{base}_id': null}}; to exclude one "
+                f"specific {base} use filters={{'{base}_id__n': <id>}}."
+            )
 
         if suffix == "in":
             return (
@@ -181,14 +275,15 @@ class NetBoxToolWrapper:
             # Check if this tool uses filters
             if "filters" in kwargs or "filter" in kwargs:
                 filter_param = kwargs.get("filters") or kwargs.get("filter") or {}
+                object_type = kwargs.get("object_type")
 
                 # Find the first invalid key (validate_filter returns on the first failure)
-                is_valid, error_msg = self.validator.validate_filter(filter_param)
+                is_valid, error_msg = self.validator.validate_filter(filter_param, object_type)
 
                 if not is_valid:
                     # Identify which key failed so the suggestion is targeted at it
                     invalid_key = next(
-                        (k for k in filter_param if not self.validator.validate_filter({k: filter_param[k]})[0]),
+                        (k for k in filter_param if not self.validator.validate_filter({k: filter_param[k]}, object_type)[0]),
                         next(iter(filter_param), ""),
                     )
                     suggestion = self.validator.suggest_alternative(invalid_key)

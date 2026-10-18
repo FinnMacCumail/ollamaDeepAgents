@@ -259,3 +259,85 @@ async def test_filter_recovery_integration(query_metrics):
     assert query_metrics.filter_errors == 3
     assert query_metrics.recovered_errors == 3
     assert query_metrics.recovery_rate == 100.0
+
+class TestNullRelationAndContainmentFilters:
+    """Filters NetBox silently ignores or inverts (verified live 2026-10-18, see
+    docs/development/2026-10-18_filter-naming-after-in.md): the only form for
+    "no <relation> assigned" is `<relation>_id: null`; on ipam.ipaddress the
+    prefix containment keys are ignored/rejected and `vrf` wants an RD."""
+
+    def test_relation_empty_rejected(self):
+        validator = FilterValidator()
+        for key in ("tenant__empty", "site__empty", "role_id__empty", "primary_ip4__empty"):
+            is_valid, error = validator.validate_filter({key: "true"})
+            assert is_valid is False, key
+            assert "silently ignored" in error and "_id': null" in error
+
+    def test_string_empty_still_valid(self):
+        validator = FilterValidator()
+        assert validator.validate_filter({"serial__empty": "true"})[0] is True
+        assert validator.validate_filter({"description__empty": "true"})[0] is True
+
+    def test_relation_negated_null_rejected(self):
+        validator = FilterValidator()
+        for value in (None, "null", "None"):
+            is_valid, error = validator.validate_filter({"tenant__n": value})
+            assert is_valid is False
+            assert "HAVE a tenant" in error and "'tenant_id': null" in error
+        # ordinary negation of a specific id is still fine
+        assert validator.validate_filter({"role_id__n": 4})[0] is True
+
+    def test_null_id_filter_is_the_valid_form(self):
+        validator = FilterValidator()
+        assert validator.validate_filter({"tenant_id": None})[0] is True
+        assert validator.validate_filter({"vrf_id": None}, "ipam.ipaddress")[0] is True
+
+    def test_suggestions_name_the_null_id_form(self):
+        validator = FilterValidator()
+        for key in ("tenant__null", "tenant__isnull", "tenant__empty", "site_id__empty"):
+            assert "_id': null" in validator.suggest_alternative(key), key
+        assert "'tenant_id': null" in validator.suggest_alternative("tenant__n")
+
+    def test_ipaddress_containment_keys_rejected_only_there(self):
+        validator = FilterValidator()
+        for key in ("within", "within_include", "without", "contains"):
+            is_valid, error = validator.validate_filter({key: "10.0.0.0/8"}, "ipam.ipaddress")
+            assert is_valid is False, key
+            assert "parent" in error
+            assert validator.validate_filter({key: "10.0.0.0/8"}, "ipam.prefix")[0] is True
+            assert validator.validate_filter({key: "10.0.0.0/8"})[0] is True  # type unknown
+        assert validator.validate_filter({"parent": "10.0.0.0/8"}, "ipam.ipaddress")[0] is True
+        assert "parent" in validator.suggest_alternative("within")
+
+    def test_vrf_name_filter_rejected_on_ipam(self):
+        validator = FilterValidator()
+        is_valid, error = validator.validate_filter({"vrf": "hvl-guest"}, "ipam.ipaddress")
+        assert is_valid is False and "vrf_id" in error
+        assert validator.validate_filter({"vrf": "65000:1"}, "dcim.device")[0] is True
+        assert "vrf_id" in validator.suggest_alternative("vrf")
+
+
+class TestNullRelationRecovery:
+    def test_null_relation_strategy(self):
+        mw = FilterErrorRecoveryMiddleware()
+        msg = ("TOOL_VALIDATION_ERROR: Invalid filter pattern: tenant__empty ('__empty' is "
+               "silently ignored on relation fields - NetBox returns the UNFILTERED set; "
+               "for objects with no tenant use {'tenant_id': null})")
+        assert mw._detect_error_type(msg) == "null_relation"
+        strategy = mw._generate_recovery_strategy("null_relation", "tenant__empty", msg)
+        assert strategy["approach"] == "null_id_filter"
+        assert '"tenant_id": null' in strategy["steps"][0]["example"]
+
+    def test_negated_null_is_null_relation(self):
+        mw = FilterErrorRecoveryMiddleware()
+        msg = "Invalid filter pattern: tenant__n with value null ('tenant__n': null returns ...)"
+        assert mw._detect_error_type(msg) == "null_relation"
+
+    def test_ip_parent_strategy(self):
+        mw = FilterErrorRecoveryMiddleware()
+        msg = ("TOOL_VALIDATION_ERROR: Invalid filter pattern: within (on ipam.ipaddress "
+               "'within' is ignored or rejected - it is a prefix filter; ...)")
+        assert mw._detect_error_type(msg) == "ip_parent_filter"
+        assert mw._extract_filter(msg) == "within"
+        strategy = mw._generate_recovery_strategy("ip_parent_filter", "within", msg)
+        assert strategy["approach"] == "parent_filter"

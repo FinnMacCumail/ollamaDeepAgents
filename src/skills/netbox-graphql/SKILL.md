@@ -57,7 +57,7 @@ This reads the LIVE schema (including installed plugins), so it works for power,
 circuits, wireless, tenancy, VMs, custom objects — anything on the instance, not
 just the examples in this skill. Discover → write → execute.
 
-## UNIVERSAL GRAMMAR (identical for every NetBox type — NetBox 4.4 / Strawberry)
+## UNIVERSAL GRAMMAR (identical for every NetBox type — NetBox 4.3 / Strawberry, verified live 2026-10-18)
 
 - **Root query fields are the snake_case model name + `_list`**: `device_list`,
   `site_list`, `vlan_list`, `prefix_list`, `ip_address_list` (IPAddress →
@@ -67,12 +67,28 @@ just the examples in this skill. Discover → write → execute.
   `netbox_graphql_schema()` with no argument to list every root field.
 - **Types are `<Model>Type`**: `DeviceType`, `SiteType`, `CircuitType`,
   `PowerFeedType`. Pass these to `netbox_graphql_schema`.
-- **ID / PK filters are BARE integers** — `{id: 6}` or `{id: [6, 7, 8]}`.
-  NEVER `{id: {exact: 6}}` (that is 4.5 syntax and FAILS on this instance).
-- **String / other scalar filters use lookup objects**:
+- **The filter argument is `filters:` (plural).** `device_list(filter: {...})` and
+  `device_list(cluster: {...})` are "Unknown argument" errors — every filter goes
+  inside `filters: {...}`. The tool rejects these before the request.
+- **ID / PK filters take ONE bare integer** — `{id: 6}`, `{site_id: 25}`.
+  **A list is REJECTED on this instance**: `{id: [6, 7, 8]}` fails with
+  *"ID cannot represent a non-string and non-integer value"* (verified live 2026-10-18;
+  this skill used to say the opposite). Lookup objects on an ID also fail
+  (`{id: {exact: 6}}`, `{id: {in_list: [...]}}`). For SEVERAL objects:
+  - filter a string field: `{name: {in_list: ["hq-acc02", "hq-acc04"]}}`
+  - or a parent: `{site_id: 25}`, `{tenant_id: 14}` — then select client-side
+  - or at most **10 aliases**, one id each (NetBox: "12 aliases found. Allowed: 10")
+- **`{tenant_id: null}` is SILENTLY IGNORED** (returns every object). "No tenant /
+  no X assigned" questions go to the REST tool: `netbox_get_objects(<type>,
+  filters={"tenant_id": null})`.
+- **String / other scalar filters use lookup objects** (the exact names — `icontains`
+  is NOT one of them):
   - `{name: {exact: "dmi01-nashua-rtr01"}}`
-  - `{name: {i_contains: "switch"}}`  (case-insensitive contains)
+  - `{name: {i_contains: "switch"}}`  (case-insensitive contains; also `i_exact`,
+    `i_starts_with`, `i_ends_with`, `i_regex`, `starts_with`, `ends_with`, `regex`, `is_null`)
   - `{name: {in_list: ["DM-Nashua", "DM-Akron"]}}`  (multi-value)
+- **Paging is an argument object, not `limit:`**: `device_list(pagination: {limit: 100,
+  offset: 0})`. `device_list(limit: 1000)` is an "Unknown argument" error.
 - **Nested relationship filters WORK** (the whole reason to use GraphQL — MCP
   cannot): `device_list(filters: {site: {name: {in_list: ["DM-Nashua"]}}})`.
 - **Select only the fields you need** (keeps payloads small; results do not
