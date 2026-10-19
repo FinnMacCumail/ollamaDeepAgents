@@ -127,3 +127,64 @@ also grew the context 40% and taxed every later turn. That is the same-question 
 variance the harness header warns about (9 vs 14 under identical config), and in this run it
 bought the right population. One run each way; the full v5 harness is the measurement that
 can show the projected ~20-30 call saving.
+
+## Full 90-question v5 run on this change (2026-10-18/19)
+
+Experiment `llamacpp-qwen3.8-flash-next-UD-Q4_K_XL-v5-filter-naming-full-8b847369`, trace
+`docs/traces/2026-10-19_netbox-benchmark-v5_filter-naming-full.md`. Same harness, dataset,
+evaluators, judge and server configuration as the 17 October run; the only difference is
+this change.
+
+| | 2026-09-23 | 2026-10-17 (server change) | 2026-10-18 (this change) |
+|---|---|---|---|
+| wall, first question to last | 6.78 h | 5.30 h | **5.26 h** |
+| agent time, sum of 90 | 19,345 s | 14,396 s | **14,248 s** |
+| mean / median / max per question | 215 / 153 / 1,588 s | 160 / 120 / 761 s | **158 / 113 / 743 s** |
+| simple / medium / advanced mean | 109 / 206 / 331 s | 97 / 168 / 216 s | 91 / 173 / 211 s |
+| questions faster than the previous run | — | 73 of 90 | 48 of 90 |
+| correctness | 0.906 | 0.922 | **0.928** |
+| completeness | 0.944 | 0.944 | **0.978** |
+| tool calls per question | 5.52 | 4.88 | 4.99 |
+| errors | 0 | 0 | 0 |
+
+**Where the targeted calls went** (every tool call classified, both October runs):
+
+| category | 17 Oct | 18 Oct |
+|---|---|---|
+| "no X assigned" fumble that reached NetBox (`__empty`, `__n: null`, ...) | 4 | **0** |
+| `<relation>_id: null` used correctly | 1 | **13** |
+| ip-address `within` / `vrf` that reached NetBox | 2 | **0** |
+| REST 400 from a filter value | 2 | **0** |
+| REST validation error returned to the model | 1 | 0 |
+| tenant looked up as a provider | 7 | **2** |
+| GraphQL queries issued / questions using GraphQL | 31 / 9 | 53 / 18 |
+| GraphQL accepted by NetBox | 15 | **30** |
+| GraphQL caught by the pre-check before HTTP | 0 | 7 (6× `limit:`, 1× id list) |
+| GraphQL rejected by NetBox | 16 | 16 |
+| ... of which grammar (`filter:`, `limit:`, id list, unknown argument) | 8 | **0** |
+| ... of which field/type names (`Cannot query field`, `not defined by type`) | 2 | 14 |
+| ... of which a lookup object on a nested relation id (`tenant: {id: {exact: 14}}`) | 0 | 2 |
+| schema introspections | 21 | 30 |
+| empty results / followed by a retry with other keys | 30 / 4 | 38 / 5 |
+| `netbox_get_changelogs` 400 (`action=created`) | 0 | 3 |
+
+**Reading.** On the REST side the change did what it was built to do: every "no X assigned"
+fumble, every ip-address containment mistake and every filter-value 400 disappeared, and the
+model wrote the working null form thirteen times. The tenant-as-provider detour is only
+reduced, as expected of guidance rather than a rule. On the GraphQL side the grammar errors
+are gone from NetBox's rejections, but the model now uses GraphQL twice as often (53 queries
+in 18 questions against 31 in 9) — the corrected skill reads as more usable — and the
+residual rejections are field-name mistakes the pre-check cannot know about. Net: the same
+number of GraphQL rejections, more schema calls, more successful GraphQL answers, and three
+points of completeness. Wall time is a wash (1% faster, median 6% faster, 48 of 90 quicker)
+with correctness and completeness up. The projected 20–30 call saving did not materialise as
+wall time because the GraphQL usage grew into the space the REST fixes freed.
+
+**Two new findings from this run, not yet fixed.**
+1. `netbox_get_changelogs(action="created")` is a 400 three times: NetBox's values are
+   `create` / `update` / `delete` (verified live: `action=create` → 3,158, `action=created` →
+   400), and the MCP server's own docstring says *"(created, updated, deleted)"* — the same
+   shape as the `id__in` example that caused ADR-0041.
+2. The GraphQL pre-check only inspects top-level filter keys; `tenant: {id: {exact: 14}}` and
+   `device: {id: {in_list: [...]}}` reached NetBox twice. The rule should apply to `id` keys at
+   any nesting depth (the valid nested form is `tenant: {id: 14}`).

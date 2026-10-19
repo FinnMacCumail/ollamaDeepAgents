@@ -20,6 +20,7 @@ This directory contains:
 - Validator now rejects `<relation>__empty`, `<relation>__n: null`, ip-address containment keys and `vrf`, each with the working form in the message; recovery middleware gained matching strategies.
 - `netbox_graphql` rejects `filter:`, `limit:`, list/lookup/null on ID keys and >10 aliases before the HTTP round trip.
 - Skills: ID-list claim reversed, new *UNASSIGNED RELATIONS* and *TENANTS OWN CIRCUITS* sections.
+- Full v5 run (`...-v5-filter-naming-full-8b847369`, trace `docs/traces/2026-10-19_netbox-benchmark-v5_filter-naming-full.md`): wall 5.30 → 5.26 h, correctness 0.922 → 0.928, completeness 0.944 → 0.978; REST null/containment/400 fumbles 8 → 0, GraphQL grammar rejections 8 → 0, but GraphQL usage doubled (31 → 53 queries) so GraphQL rejections stayed at 16 (now field-name errors). Two follow-ups found: changelog `action` values are `create/update/delete` (server docstring says `created/...`), and nested `id: {exact: ...}` lookups escape the pre-check.
 - Gate: session harness, same ladder as 2026-10-06 (`docs/traces/2026-10-18_netbox-session_filter-naming.*`): 0 validation errors, 9.5/10 vs 7.0/10 correct, 1,444 s vs 1,312 s on 36 vs 20 calls (planning variance, turn 6).
 
 ### [2026-10-17: MoE expert cache A/B, server switch to b11713 + `--load-mode none`, v5 subset rerun](2026-10-17_moe-cache-ab-and-server-switch.md)
