@@ -78,6 +78,8 @@ just the examples in this skill. Discover → write → execute.
   - filter a string field: `{name: {in_list: ["hq-acc02", "hq-acc04"]}}`
   - or a parent: `{site_id: 25}`, `{tenant_id: 14}` — then select client-side
   - or at most **10 aliases**, one id each (NetBox: "12 aliases found. Allowed: 10")
+  The same rule holds INSIDE a nested relation filter: `{tenant: {id: 14}}` works,
+  `{tenant: {id: {exact: 14}}}` and `{device: {id: {in_list: [...]}}}` fail the same way.
 - **`{tenant_id: null}` is SILENTLY IGNORED** (returns every object). "No tenant /
   no X assigned" questions go to the REST tool: `netbox_get_objects(<type>,
   filters={"tenant_id": null})`.

@@ -62,6 +62,13 @@ RELATION_FIELDS: frozenset[str] = frozenset({
 # not the VRF name (400 otherwise); the usable key is `vrf_id`.
 _IPADDRESS_PREFIX_ONLY_KEYS: frozenset[str] = frozenset({"within", "within_include", "without", "contains"})
 
+# The change-log `action` filter is an enum of bare verbs. The upstream MCP
+# server's tool description says "(created, updated, deleted)"; NetBox 4.3
+# answers 400 to those (verified live 2026-10-19: action=create -> 3,158,
+# action=created -> "Select a valid choice"). Same shape as the `id__in`
+# example behind ADR-0041: the tool description is the source of the bad value.
+CHANGELOG_ACTION_FIX: dict[str, str] = {"created": "create", "updated": "update", "deleted": "delete"}
+
 
 class FilterValidator:
     """Validates NetBox filters before sending to MCP server.
@@ -99,6 +106,14 @@ class FilterValidator:
                         f"Invalid filter pattern: {key} (on ipam.ipaddress '{key}' is "
                         f"ignored or rejected - it is a prefix filter; addresses inside "
                         f"a CIDR are filtered with 'parent': {{'parent': '<cidr>'}})",
+                    )
+                if key == "action" and str(value).lower() in CHANGELOG_ACTION_FIX:
+                    fix = CHANGELOG_ACTION_FIX[str(value).lower()]
+                    return (
+                        False,
+                        f"Invalid filter pattern: action ('{value}' is not a change-log "
+                        f"action; NetBox uses the bare verbs create / update / delete - "
+                        f"use {{'action': '{fix}'}})",
                     )
                 if key == "vrf" and (object_type or "").startswith("ipam."):
                     return (
@@ -178,6 +193,11 @@ class FilterValidator:
                     "On ipam.ipaddress use filters={'parent': '<cidr>'} for addresses "
                     "inside a prefix ('within'/'within_include'/'contains' are "
                     "ipam.prefix filters and are ignored or rejected here)."
+                )
+            if invalid_filter == "action":
+                return (
+                    "Change-log actions are the bare verbs: filters={'action': 'create'} / "
+                    "'update' / 'delete' (not 'created' / 'updated' / 'deleted')."
                 )
             if invalid_filter == "vrf":
                 return (
@@ -271,6 +291,19 @@ class NetBoxToolWrapper:
                 # Called with single positional dict - convert to kwargs
                 kwargs = args[0]
                 args = ()
+
+            # netbox_get_changelogs: `action` may arrive as a direct argument
+            if "action" in kwargs and str(kwargs["action"]).lower() in CHANGELOG_ACTION_FIX:
+                fix = CHANGELOG_ACTION_FIX[str(kwargs["action"]).lower()]
+                logger.warning(
+                    "Invalid change-log action - returning structured error to model",
+                    tool=tool.name, action=kwargs["action"],
+                )
+                return (
+                    f"TOOL_VALIDATION_ERROR: action '{kwargs['action']}' is not a change-log "
+                    f"action; NetBox uses the bare verbs create / update / delete.\n"
+                    f"Suggestion: reissue with action='{fix}'."
+                )
 
             # Check if this tool uses filters
             if "filters" in kwargs or "filter" in kwargs:

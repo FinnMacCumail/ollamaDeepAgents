@@ -1,0 +1,24 @@
+diff --git a/src/netbox_mcp_server/server.py b/src/netbox_mcp_server/server.py
+index 5118aa0..a117eb6 100644
+--- a/src/netbox_mcp_server/server.py
++++ b/src/netbox_mcp_server/server.py
+@@ -378,7 +378,9 @@ def netbox_get_changelogs(filters: dict):
+                               Note: This expects a numeric ID, not an object type string
+     - changed_object_id: Filter by ID of the changed object
+     - object_repr: Filter by object representation (usually contains object name)
+-    - action: Filter by action type (created, updated, deleted)
++    - action: Filter by action type. NetBox takes the bare verbs: create, update, delete
++              (NOTE, local change not upstream: "created"/"updated"/"deleted" return HTTP 400,
++              verified live on NetBox 4.3.3, 2026-10-19)
+     - time_before: Filter for changes made before a given time (ISO 8601 format)
+     - time_after: Filter for changes made after a given time (ISO 8601 format)
+     - q: Search term to filter by object representation
+@@ -398,7 +400,7 @@ def netbox_get_changelogs(filters: dict):
+     - user: The user who made the change
+     - user_name: The username of the user who made the change
+     - request_id: The unique identifier of the request that made the change
+-    - action: The type of action performed (created, updated, deleted)
++    - action: The type of action performed (create, update, delete)
+     - changed_object_type: The type of object that was changed
+     - changed_object_id: The ID of the object that was changed
+     - object_repr: String representation of the changed object

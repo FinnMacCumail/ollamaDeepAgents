@@ -260,6 +260,11 @@ filters={"role": "access-switch"}      # spaces become hyphens
 filters={"site": "dm-akron"}            # slug, not "DM-Akron"
 ```
 
+**Change-log actions are bare verbs.** `netbox_get_changelogs(filters={"action": "create"})`,
+`"update"`, `"delete"`. The tool description's `created` / `updated` / `deleted` are **400s**
+(verified live 2026-10-19: `action=create` → 3,158 records, `action=created` → "Select a valid
+choice"); the validator rejects them with the verb in the message.
+
 When in doubt about the allowed values for a status/role enum on a given model, you can
 introspect the schema via `OPTIONS /api/<app>/<model>/` (see HIDDEN API LEVERS below).
 

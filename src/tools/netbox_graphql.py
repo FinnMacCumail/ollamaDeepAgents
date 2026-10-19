@@ -194,31 +194,39 @@ def _iter_fields(selection_set):
             yield from _iter_fields(sel.selection_set)
 
 
-def _check_filter_object(obj: ObjectValueNode, where: str) -> str | None:
-    """Reject filter shapes NetBox's ID scalars do not accept or silently ignore."""
+def _check_filter_object(obj: ObjectValueNode, where: str, path: str = "") -> str | None:
+    """Reject filter shapes NetBox's ID scalars do not accept or silently ignore.
+    Applies at every nesting depth: a relation filter such as `tenant: {id: ...}`
+    carries the same plain-ID `id` key as the top level (verified 2026-10-19:
+    `tenant: {id: {exact: 14}}` and `device: {id: {in_list: [...]}}` fail with
+    'ID cannot represent a non-string and non-integer value'; `tenant: {id: 14}` works)."""
     for f in obj.fields:
         name = f.name.value
+        label = f"{path}{name}"
         is_id_key = name == "id" or name.endswith("_id")
         if is_id_key and isinstance(f.value, ListValueNode):
             return (
-                f"{where}: '{name}' takes ONE id, not a list (NetBox: 'ID cannot "
+                f"{where}: '{label}' takes ONE id, not a list (NetBox: 'ID cannot "
                 f"represent a non-string and non-integer value'). For several objects "
                 f"use a string lookup (name: {{in_list: [...]}}), a parent filter "
                 f"(site_id, tenant_id), or up to {GQL_MAX_ALIASES} aliased queries with one id each"
             )
         if is_id_key and isinstance(f.value, ObjectValueNode):
             return (
-                f"{where}: '{name}' is a plain ID scalar and takes no lookup object "
+                f"{where}: '{label}' is a plain ID scalar and takes no lookup object "
                 f"(no exact/in_list) - pass the bare id: {name}: 6"
             )
         if is_id_key and isinstance(f.value, NullValueNode):
             return (
-                f"{where}: '{name}: null' is silently ignored (returns every object). "
+                f"{where}: '{label}: null' is silently ignored (returns every object). "
                 f"For unassigned objects use the REST tool: "
                 f"netbox_get_objects(<type>, filters={{'{name}': null}})"
             )
-        if name in ("AND", "OR", "NOT") and isinstance(f.value, ObjectValueNode):
-            err = _check_filter_object(f.value, where)
+        # recurse into nested relation filters (tenant: {...}, device: {...}) and
+        # the AND/OR/NOT combinators; lookup objects on string fields have no
+        # id keys, so recursing into them is harmless
+        if not is_id_key and isinstance(f.value, ObjectValueNode):
+            err = _check_filter_object(f.value, where, f"{label}.")
             if err:
                 return err
     return None

@@ -46,6 +46,7 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
             r"Invalid filter.*__n with value null": "null_relation",
             # ipam.ipaddress has no containment filters; `parent` is the one.
             r"Invalid filter pattern: (within|within_include|without|contains)\b": "ip_parent_filter",
+            r"not a change-log action": "changelog_action",
             r"Invalid filter.*__regex": "django_lookup",
             r"Invalid filter.*__(gt|gte|lt|lte)\b": "django_lookup",
             # Known relationship-traversal cases
@@ -276,6 +277,18 @@ class FilterErrorRecoveryMiddleware(AgentMiddleware):
                 f"silently ignored on relation fields (NetBox returns the unfiltered set) and "
                 f"'{base}__n': null returns the objects that HAVE a {base}. The only form NetBox "
                 f"honours is '{base}_id': null."
+            )
+        elif error_type == "changelog_action":
+            strategy["approach"] = "bare_verb_action"
+            strategy["steps"] = [
+                {
+                    "description": "Reissue the change-log query with the bare verb",
+                    "example": 'netbox_get_changelogs(filters={"action": "create"})  # or "update" / "delete"',
+                }
+            ]
+            strategy["explanation"] = (
+                "NetBox's change-log 'action' filter takes create / update / delete; the "
+                "past-tense forms in the tool description return HTTP 400."
             )
         elif error_type == "ip_parent_filter":
             strategy["approach"] = "parent_filter"

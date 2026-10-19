@@ -56,7 +56,11 @@ Three more rules of the same kind (verified live 2026-10-18, see
 - **GraphQL** (`src/tools/netbox_graphql.py`, `_validate_filter_grammar`): the argument is
   `filters:`; ID keys take ONE bare id (a list or lookup object is a NetBox error);
   `<x>_id: null` is silently ignored; `limit:`/`offset:` are `pagination: {...}`; at most 10
-  aliases. All rejected before the HTTP request.
+  aliases. All rejected before the HTTP request. The ID rule applies at any nesting depth
+  (`tenant: {id: 14}` is right; `tenant: {id: {exact: 14}}` is rejected).
+- **Change-log `action` is `create` / `update` / `delete`** (bare verbs). The upstream MCP
+  server description says `created/updated/deleted`; those are 400s on NetBox 4.3.3. The
+  validator rejects them (also as a direct `action` argument) and names the verb.
 
 Rules:
 - **Relationship filters take a numeric ID or lowercase slug, never a display name.**

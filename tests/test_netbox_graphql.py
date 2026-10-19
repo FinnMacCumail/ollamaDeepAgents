@@ -331,3 +331,30 @@ async def test_valid_filter_grammar_passes(cfg, query):
     body = {"data": {"device_list": []}, "errors": None}
     result = await execute_graphql(cfg, query, transport=_json_transport(body))
     assert isinstance(result, dict)
+
+
+# ---------------------------------------------- nested relation id lookups ---
+# Verified 2026-10-19: the plain-ID rule holds inside nested relation filters.
+
+@pytest.mark.parametrize("query, needle", [
+    ('query { power_feed_list(filters: {tenant: {id: {exact: 14}}}) { id } }', "tenant.id"),
+    ('query { power_outlet_list(filters: {device: {id: {in_list: [149, 150]}}}) { id } }', "device.id"),
+    ('query { power_feed_list(filters: {site: {id: [30, 28]}}) { id } }', "ONE id, not a list"),
+    ('query { device_list(filters: {site: {region: {id: [1, 2]}}}) { id } }', "site.region.id"),
+])
+async def test_nested_id_lookup_rejected_before_any_http(cfg, query, needle):
+    result = await execute_graphql(cfg, query, transport=_forbidden_transport())
+    assert isinstance(result, str)
+    assert result.startswith("TOOL_VALIDATION_ERROR")
+    assert needle in result
+
+
+@pytest.mark.parametrize("query", [
+    'query { power_feed_list(filters: {tenant: {id: 14}, status: planned}) { id } }',
+    'query { device_list(filters: {site: {name: {in_list: ["HVL-SEA-DC1"]}}, name: {i_contains: "sw"}}) { id } }',
+    'query { device_list(filters: {site: {region: {id: 3}}}) { id } }',
+])
+async def test_nested_bare_id_and_string_lookups_pass(cfg, query):
+    body = {"data": {"device_list": []}, "errors": None}
+    result = await execute_graphql(cfg, query, transport=_json_transport(body))
+    assert isinstance(result, dict)

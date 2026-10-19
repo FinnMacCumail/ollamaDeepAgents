@@ -188,3 +188,24 @@ wall time because the GraphQL usage grew into the space the REST fixes freed.
 2. The GraphQL pre-check only inspects top-level filter keys; `tenant: {id: {exact: 14}}` and
    `device: {id: {in_list: [...]}}` reached NetBox twice. The rule should apply to `id` keys at
    any nesting depth (the valid nested form is `tenant: {id: 14}`).
+
+## Follow-up fixes (2026-10-19)
+
+Both findings from the full run are now closed; unit-tested (8 new tests, 71 passing in the two
+files) and the change-log rule exercised through the real wrapped MCP tool, but **not re-gated
+on the full harness** — three 400s and two GraphQL rejections per run is below what a single
+run can resolve.
+
+1. **Change-log `action` values.** `validate_filter` rejects `{"action": "created" | "updated" |
+   "deleted"}` with the bare verb in the message; the tool wrapper also catches `action` as a
+   direct argument; the recovery middleware has a `changelog_action` strategy; the filters skill
+   says so under *STATUS / ENUM / SLUG VALUES*. The local MCP server copy's docstring is
+   corrected (commit `d05d3f4` in `netbox-mcp-server`), diff saved as
+   `2026-10-19_netbox-mcp-server-changelog-action.patch` beside the `__in` one for the same
+   upstream report. Verified: `action=create` → 3,158, `update` → 363, `delete` → 22;
+   `created`/`updated`/`deleted` → 400 "Select a valid choice".
+2. **GraphQL ID rule at any depth.** `_check_filter_object` now recurses into every nested
+   relation filter, so `tenant: {id: {exact: 14}}`, `device: {id: {in_list: [...]}}`,
+   `site: {id: [30, 28]}` and `site: {region: {id: [1, 2]}}` are rejected before HTTP with the
+   nested path in the message; `tenant: {id: 14}` and string lookups inside relations pass.
+   The GraphQL skill's ID bullet says the rule holds inside nested filters.

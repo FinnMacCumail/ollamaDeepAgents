@@ -341,3 +341,30 @@ class TestNullRelationRecovery:
         assert mw._extract_filter(msg) == "within"
         strategy = mw._generate_recovery_strategy("ip_parent_filter", "within", msg)
         assert strategy["approach"] == "parent_filter"
+
+
+class TestChangelogAction:
+    """NetBox's change-log `action` filter takes create / update / delete; the
+    MCP server description taught the past-tense forms (400 on NetBox 4.3.3)."""
+
+    def test_past_tense_rejected_with_verb(self):
+        validator = FilterValidator()
+        for bad, good in (("created", "create"), ("updated", "update"), ("deleted", "delete")):
+            is_valid, error = validator.validate_filter({"action": bad})
+            assert is_valid is False, bad
+            assert f"'action': '{good}'" in error
+        assert "create" in validator.suggest_alternative("action")
+
+    def test_bare_verbs_valid(self):
+        validator = FilterValidator()
+        for good in ("create", "update", "delete"):
+            assert validator.validate_filter({"action": good})[0] is True
+
+    def test_recovery_strategy(self):
+        mw = FilterErrorRecoveryMiddleware()
+        msg = ("TOOL_VALIDATION_ERROR: Invalid filter pattern: action ('created' is not a "
+               "change-log action; NetBox uses the bare verbs create / update / delete - "
+               "use {'action': 'create'})")
+        assert mw._detect_error_type(msg) == "changelog_action"
+        strategy = mw._generate_recovery_strategy("changelog_action", "action", msg)
+        assert strategy["approach"] == "bare_verb_action"
