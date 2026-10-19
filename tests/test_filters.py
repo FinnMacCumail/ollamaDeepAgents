@@ -300,7 +300,7 @@ class TestNullRelationAndContainmentFilters:
 
     def test_ipaddress_containment_keys_rejected_only_there(self):
         validator = FilterValidator()
-        for key in ("within", "within_include", "without", "contains"):
+        for key in ("within", "within_include", "without", "contains", "prefix"):
             is_valid, error = validator.validate_filter({key: "10.0.0.0/8"}, "ipam.ipaddress")
             assert is_valid is False, key
             assert "parent" in error

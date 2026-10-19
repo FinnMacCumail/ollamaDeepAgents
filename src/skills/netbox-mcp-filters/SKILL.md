@@ -418,7 +418,7 @@ These NetBox API features rarely surface in tutorials but solve common problems:
 
 - **IP addresses inside a prefix use `parent`, not `within`:**
   `netbox_get_objects("ipam.ipaddress", filters={"parent": "10.0.0.0/8"})`.
-  On `ipam.ipaddress`, `within` is **silently ignored** (verified live 2026-10-18: 616 of
+  On `ipam.ipaddress`, `within` and `prefix` are **silently ignored** (verified live 2026-10-18/19: 616 of
   616 addresses came back) and `without` is a 400; the validator now rejects both.
   Likewise `vrf=` on ipam objects takes the route distinguisher and 400s on a VRF name —
   resolve the VRF on `ipam.vrf` and filter with `vrf_id` (`{"vrf_id": None}` = global table).

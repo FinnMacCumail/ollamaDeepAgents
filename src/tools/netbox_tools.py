@@ -58,9 +58,10 @@ RELATION_FIELDS: frozenset[str] = frozenset({
 # `within_include` and `contains` belong to ipam.prefix. On ip-addresses
 # `within=<cidr>` is SILENTLY IGNORED (returns every address; verified live
 # 2026-10-18: 616 of 616) and `without` is a 400. The address-in-prefix filter
-# is `parent=<cidr>`. `vrf=` on ipam objects takes the route distinguisher,
-# not the VRF name (400 otherwise); the usable key is `vrf_id`.
-_IPADDRESS_PREFIX_ONLY_KEYS: frozenset[str] = frozenset({"within", "within_include", "without", "contains"})
+# is `parent=<cidr>`. `prefix=<cidr>` is likewise ignored on ip-addresses
+# (verified 2026-10-19: 616 of 616). `vrf=` on ipam objects takes the route
+# distinguisher, not the VRF name (400 otherwise); the usable key is `vrf_id`.
+_IPADDRESS_PREFIX_ONLY_KEYS: frozenset[str] = frozenset({"within", "within_include", "without", "contains", "prefix"})
 
 # The change-log `action` filter is an enum of bare verbs. The upstream MCP
 # server's tool description says "(created, updated, deleted)"; NetBox 4.3
