@@ -183,6 +183,51 @@ total_ips = sum(i["count_ipaddresses"] for i in ifaces["results"])
 Devices also expose `primary_ip4`, `primary_ip6`, and `oob_ip` as fully-resolved nested
 objects — those don't require a follow-up `ipam.ipaddress` query either.
 
+## RESOLVING A TENANT, PROVIDER OR MANUFACTURER NAME
+
+A name like "Halvorsen Logistics" or "Dunder-Mifflin" is almost always a **tenant**. Resolve
+it directly — one call — and then filter everything else by `tenant_id`:
+
+```python
+# RIGHT — one call, returns {"id": 14, "name": "Halvorsen Logistics", "slug": "hvl"}
+netbox_get_objects("tenancy.tenant", filters={"name__ic": "halvorsen"}, fields=["id", "name", "slug"])
+# then: netbox_get_objects("dcim.device", filters={"tenant_id": 14, ...})
+
+# Same shape for a carrier or a vendor:
+netbox_get_objects("circuits.provider", filters={"name__ic": "evergreen"}, fields=["id", "name", "slug"])
+netbox_get_objects("dcim.manufacturer", filters={"name__ic": "cisco"}, fields=["id", "name", "slug"])
+```
+
+**Why not the global search:** `netbox_search_objects` with no `object_types` searches a fixed
+list — devices, sites, IPs, interfaces, racks, VLANs, circuits, VMs, and (since 2026-10-19)
+tenants, providers and manufacturers. An organisation name matches none of the infrastructure
+types, so the result is a row of empty lists, which does NOT mean the object is missing. In
+the 2026-10-18 benchmark run 18 of 24 searches came back empty for exactly this reason, and a
+web-chat turn then spent six calls trying the tenant as a manufacturer and a device type. If
+you do search, pass `object_types=["tenancy.tenant"]`. Never guess a different object class
+after an empty search; resolve the name as above.
+
+## PER-PARENT COUNTS: FILTER THE PARENT, READ THE COUNT
+
+"How many X does each Y have" is answered by the parent's native `*_count` field (table
+above) plus a role or type filter — one call, a few KB. Fetching the children is the
+expensive wrong way: the child list for a tenant's PDUs is 46 KB of outlets, and the device
+list before it 73 KB, each a ~30k-token prefill.
+
+```python
+# RIGHT — 12 rows, 2.7 KB, answers "how many outlets per PDU and how many PDUs"
+netbox_get_objects("dcim.device",
+    filters={"tenant_id": 14, "role": "pdu"},
+    fields=["id", "name", "site", "power_outlet_count"])
+
+# WRONG — two calls, ~120 KB of tool output, four minutes of prefill (web chat, 2026-10-19)
+netbox_get_objects("dcim.device", filters={"tenant_id": 14}, fields=["id", "name", "device_type", "status"], limit=100)
+netbox_get_objects("dcim.poweroutlet", filters={"device_id": [149, 150, ...]}, fields=["id", "name", "device"])
+```
+
+Only fetch the child objects when the question is about the children themselves (which
+outlets are cabled, which interfaces are up), and then select the fewest fields that answer it.
+
 ## AVOID REDUNDANT SEARCHES
 
 When `netbox_search_objects` returns results, USE THEM. Do not issue further searches

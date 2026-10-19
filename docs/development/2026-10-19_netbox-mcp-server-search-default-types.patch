@@ -1,0 +1,57 @@
+diff --git a/src/netbox_mcp_server/server.py b/src/netbox_mcp_server/server.py
+index a117eb6..c007527 100644
+--- a/src/netbox_mcp_server/server.py
++++ b/src/netbox_mcp_server/server.py
+@@ -108,6 +108,14 @@ DEFAULT_SEARCH_TYPES = [
+     "ipam.vlan",  # VLAN names/IDs
+     "circuits.circuit",  # Circuit identifiers
+     "virtualization.virtualmachine",  # VM names
++    # NOTE (local change, not upstream): the organisational types. Without them a
++    # search for a tenant, provider or manufacturer name returns eight empty lists,
++    # which an agent reads as "no such object" and starts guessing (measured
++    # 2026-10-19: 18-26 of 24-35 searches per 90-question run were tenant-name
++    # lookups returning nothing).
++    "tenancy.tenant",
++    "circuits.provider",
++    "dcim.manufacturer",
+ ]
+ 
+ mcp = FastMCP("NetBox")
+diff --git a/tests/test_search.py b/tests/test_search.py
+index 67c0f76..5dac4ff 100644
+--- a/tests/test_search.py
++++ b/tests/test_search.py
+@@ -6,7 +6,7 @@ import pytest
+ from pydantic import TypeAdapter, ValidationError
+ 
+ from netbox_mcp_server.netbox_types import NETBOX_OBJECT_TYPES
+-from netbox_mcp_server.server import netbox_search_objects
++from netbox_mcp_server.server import DEFAULT_SEARCH_TYPES, netbox_search_objects
+ 
+ # ============================================================================
+ # Parameter Validation Tests
+@@ -54,9 +54,9 @@ def test_searches_default_types_when_none_specified(mock_netbox):
+     result = netbox_search_objects.fn(query="test")
+ 
+     # Should search 8 default types
+-    assert mock_netbox.get.call_count == 8
++    assert mock_netbox.get.call_count == len(DEFAULT_SEARCH_TYPES)
+     assert isinstance(result, dict)
+-    assert len(result) == 8
++    assert len(result) == len(DEFAULT_SEARCH_TYPES)
+ 
+ 
+ @patch("netbox_mcp_server.server.netbox")
+@@ -251,3 +251,12 @@ def test_extracts_results_from_paginated_response(mock_netbox):
+         {"id": 1, "name": "device01"},
+         {"id": 2, "name": "device02"},
+     ]
++
++
++def test_default_search_types_include_organisational_objects():
++    """Tenant, provider and manufacturer names are what users type first; a search
++    that cannot see them returns only empty lists (local change, 2026-10-19)."""
++    from netbox_mcp_server.server import DEFAULT_SEARCH_TYPES, NETBOX_OBJECT_TYPES
++    for t in ("tenancy.tenant", "circuits.provider", "dcim.manufacturer"):
++        assert t in DEFAULT_SEARCH_TYPES
++        assert t in NETBOX_OBJECT_TYPES

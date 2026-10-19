@@ -102,6 +102,10 @@ NETBOX_SYSTEM_PROMPT = """You are a NetBox infrastructure assistant with semanti
 - Interface → Device, IP Address → Interface → Device
 - VLAN → Site, Circuit → Provider (supplier) AND Circuit → Tenant (owner): a tenant's circuits
   are circuits.circuit filtered by tenant_id; a tenant name never matches a circuits.provider
+- A tenant / provider / manufacturer NAME is resolved with netbox_get_objects("tenancy.tenant" |
+  "circuits.provider" | "dcim.manufacturer", {"name__ic": ...}) in ONE call; an empty global search
+  for such a name does NOT mean it is missing. "How many X per Y" = the parent's *_count field
+  with a role filter, never the child list.
 - "No X assigned" (no tenant, no role, no primary IP) is filters={"<x>_id": None}; __empty,
   __isnull and __n: null on a relation do NOT work (ignored or inverted)
 - Use two-step queries for cross-relationship filtering

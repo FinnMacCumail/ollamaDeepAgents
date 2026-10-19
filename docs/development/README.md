@@ -13,6 +13,13 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-19: The search tool could not see tenants, and a count question fetched the children](2026-10-19_search-cannot-see-tenants.md)
+**Correction (MCP server search defaults + skill + prompt):** a 377 s / 9-call web-chat turn traced to `netbox_search_objects` returning eight empty lists for a tenant name (tenants were not in its default types), then two 73 KB / 46 KB child fetches where one role-filtered device query with `power_outlet_count` (2.7 KB) answers the question.
+**Key points:**
+- 26 of 35 (17 Oct) and 18 of 24 (18 Oct) benchmark searches returned nothing — nearly all tenant-name lookups — the largest remaining wasted-call category.
+- Local MCP server now searches `tenancy.tenant`, `circuits.provider`, `dcim.manufacturer` by default (`d7809d9`, patch saved); skill sections on name resolution and per-parent counts; prompt lines.
+- Gate: session harness (`docs/traces/2026-10-19_netbox-session_search-types.*`): 1,248 s / 16 calls / 9.5 of 10, against 1,444 / 36 / 9.5 yesterday and 1,312 / 20 / 7.0 on 6 Oct; the tenant resolved in one search on turn 4.
+
 ### [2026-10-18: After `__in` — four more filters NetBox ignores, inverts or rejects](2026-10-18_filter-naming-after-in.md)
 **Correction (validator + GraphQL pre-check + skills + prompt):** mined both 90-question v5 runs for wasted tool calls and verified each suspect filter live. "No X assigned" is `{"<x>_id": None}` only (`__empty`/`__isnull` silently ignored, `__n: null` inverted); `within` on ip-addresses silently ignored (`parent` is the filter); `vrf` wants an RD; the GraphQL skill was teaching an ID-list form NetBox 4.3.3 rejects.
 **Key points:**
