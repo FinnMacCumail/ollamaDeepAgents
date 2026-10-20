@@ -18,6 +18,7 @@ This directory contains:
 **Key points:**
 - 26 of 35 (17 Oct) and 18 of 24 (18 Oct) benchmark searches returned nothing — nearly all tenant-name lookups — the largest remaining wasted-call category.
 - Local MCP server now searches `tenancy.tenant`, `circuits.provider`, `dcim.manufacturer` by default (`d7809d9`, patch saved); skill sections on name resolution and per-parent counts; prompt lines.
+- Full v5 run (`...-v5-search-types-full-ba60270e`, trace `docs/traces/2026-10-20_netbox-benchmark-v5_search-types-full.md`): fastest of the four runs — wall 5.26 → 5.14 h, median 113 → 97 s, tool calls 4.99 → 4.49; empty default-type searches 12 → 0; GraphQL usage fell back (53 → 17 queries); correctness 0.917 / completeness 0.972, inside judge spread. Tool-result size unchanged (next lever).
 - Gate: session harness (`docs/traces/2026-10-19_netbox-session_search-types.*`): 1,248 s / 16 calls / 9.5 of 10, against 1,444 / 36 / 9.5 yesterday and 1,312 / 20 / 7.0 on 6 Oct; the tenant resolved in one search on turn 4.
 
 ### [2026-10-18: After `__in` — four more filters NetBox ignores, inverts or rejects](2026-10-18_filter-naming-after-in.md)

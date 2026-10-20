@@ -88,3 +88,56 @@ the model applied the first half (count field, not child list) and not the secon
 the parent). Turn 10 scored 0.5 against 1.0 yesterday on the same four-call plan; judge
 noise on a comparison question, left as measured. One run; the full harness is the
 measurement for the call count.
+
+## Full 90-question v5 run on this change (2026-10-20)
+
+Experiment `llamacpp-qwen3.8-flash-next-UD-Q4_K_XL-v5-search-types-full-ba60270e`, trace
+`docs/traces/2026-10-20_netbox-benchmark-v5_search-types-full.md`. Same server, harness,
+dataset, evaluators and judge as the 17 and 18 October runs.
+
+| | 2026-09-23 | 2026-10-17 server | 2026-10-18 filters | **2026-10-20 search** |
+|---|---|---|---|---|
+| wall, first question to last | 6.78 h | 5.30 h | 5.26 h | **5.14 h** |
+| agent time, sum of 90 | 19,345 s | 14,396 s | 14,248 s | **13,782 s** |
+| mean / median per question | 215 / 153 s | 160 / 120 s | 158 / 113 s | **153 / 97 s** |
+| simple / medium / advanced mean | 109 / 206 / 331 | 97 / 168 / 216 | 91 / 173 / 211 | **77** / 163 / 220 |
+| questions faster than the previous run | — | 73 of 90 | 48 of 90 | 54 of 90 |
+| correctness | 0.906 | 0.922 | 0.928 | 0.917 |
+| completeness | 0.944 | 0.944 | 0.978 | 0.972 |
+| tool calls per question | 5.52 | 4.88 | 4.99 | **4.49** |
+| errors | 0 | 0 | 0 | 0 |
+
+**Where the calls went** (every tool call classified, 18 vs 20 October):
+
+| category | 18 Oct | 20 Oct |
+|---|---|---|
+| tool calls in total | 449 | **404** |
+| searches · returned nothing · of those with default types | 24 · 18 · 12 | 17 · **6** · **0** |
+| searches that found something | 6 | **11** |
+| tenant resolved via `tenancy.tenant` | 48 | 46 |
+| tenant looked up as provider / manufacturer / device type | 4 | 1 |
+| GraphQL queries · schema introspections | 53 · 30 | **17 · 6** |
+| GraphQL rejected by NetBox · caught by the pre-check | 25 · 7 | **4** · 7 |
+| `_id: null` used · REST validation errors · REST 400s | 13 · 0 · 0 | 15 · 2 · 1 (`role=hypervisor`, slug is `hypervisor-host`) |
+| `power_outlet_count` used | 0 | 2 |
+| tool results over 20k characters · total chars | 59 · 5.0M | 58 · 4.9M |
+
+**Reading.** The targeted pattern is gone: no default-type search came back empty, and the
+provider/manufacturer guessing fell from 4 calls to 1. The run is the fastest of the four on
+every aggregate — wall, sum, mean, median, simple tier, calls per question — with correctness
+and completeness inside the day-to-day judge spread of the two previous runs (five and nine
+questions moved in each direction). The simple tier gained most (91 → 77 s mean) because its
+questions are one lookup after a name resolution, and the resolution is now one call.
+
+The unexpected part is GraphQL: usage fell from 53 queries and 30 introspections to 17 and 6,
+and NetBox-side rejections from 25 to 4. With the tenant resolvable in one call the model
+mostly stayed on the REST path, which is the cheaper one for these questions; the GraphQL
+expansion the 18 October change had triggered reversed itself. Tool-result size did not move
+(58 results over 20k characters, 4.9M characters in total): the per-parent-count guidance was
+followed twice and the whole-list habit remains the next lever.
+
+**Four runs in sequence, same questions.** Agent time 19,345 → 14,396 → 14,248 → 13,782 s;
+calls per question 5.52 → 4.88 → 4.99 → 4.49; correctness 0.906 → 0.922 → 0.928 → 0.917. The
+server change bought the first 26%; the two guidance changes together another 4% of time and
+8% of calls, with the second one doing the work the first one's call-count projection had
+promised.
