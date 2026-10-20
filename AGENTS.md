@@ -54,6 +54,10 @@ type -> fail-open to the hand rules. Replay gate: `scripts/replay_filter_validat
 -> `"null"` and booleans -> `"true"/"false"` (HTTP clients drop JSON null). GraphQL documents
 are validated with `graphql.validate` against the introspected schema plus
 `NoNullIdFilterRule`; the hand-written grammar rules are only the fallback.
+The wrapper rebuilds MCP tools with `response_format="content_and_artifact"` and returns
+`(content, artifact)` on every path; without it the whole pair was stringified into the
+ToolMessage and the model read every result twice (fixed 2026-10-20; 63,717 -> 27,076
+chars on a 68-device query).
 `in` is deliberately excluded: the MCP server lists it, but NetBox 4.3 silently ignores
 `<field>__in` and returns the unfiltered set (verified live 2026-10-06, see
 `docs/development/2026-10-06_in-lookup-silently-ignored.md`). Multi-value is the bare key

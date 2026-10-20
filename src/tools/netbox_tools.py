@@ -517,7 +517,8 @@ class NetBoxToolWrapper:
                 return (
                     f"TOOL_VALIDATION_ERROR: action '{kwargs['action']}' is not a change-log "
                     f"action; NetBox uses the bare verbs create / update / delete.\n"
-                    f"Suggestion: reissue with action='{fix}'."
+                    f"Suggestion: reissue with action='{fix}'.",
+                    None,
                 )
 
             # Check if this tool uses filters
@@ -552,7 +553,8 @@ class NetBoxToolWrapper:
                         f"TOOL_VALIDATION_ERROR: {error_msg}\n"
                         f"Suggestion: {suggestion}\n"
                         f"Consult the netbox-mcp-filters skill for guidance. "
-                        f"Reissue this tool call with the corrected filter."
+                        f"Reissue this tool call with the corrected filter.",
+                        None,
                     )
 
             # Normalise values that would otherwise be dropped or ignored on the wire
@@ -564,7 +566,12 @@ class NetBoxToolWrapper:
             try:
                 result = await original_func(*args, **kwargs)
                 logger.debug(f"Tool {tool.name} executed successfully", kwargs=kwargs)
-                return result
+                # langchain_mcp_adapters tools are content_and_artifact: they return
+                # (content_blocks, artifact). Pass the pair through unchanged so only
+                # the content reaches the model (see response_format below).
+                if isinstance(result, tuple) and len(result) == 2:
+                    return result
+                return result, None
             except ToolException as e:
                 # MCP-layer ToolException (typically a NetBox API 400/404/500
                 # wrapped by langchain_mcp_adapters). Convert to a structured
@@ -596,7 +603,8 @@ class NetBoxToolWrapper:
                     f"(`active` not `Active`).\n"
                     f"  - Or use a parent-object aggregate field "
                     f"(e.g. `count_ipaddresses` on `dcim.interface`) to avoid "
-                    f"the failing query entirely."
+                    f"the failing query entirely.",
+                    None,
                 )
             except Exception as e:
                 logger.error(f"Tool {tool.name} failed unexpectedly", error=str(e), kwargs=kwargs)
@@ -604,11 +612,18 @@ class NetBoxToolWrapper:
 
         # Create new tool with validation wrapper
         # Use StructuredTool.from_function with coroutine parameter for async functions
+        # response_format must match the adapter's: without it LangChain stringified
+        # the whole (content, artifact) tuple into the ToolMessage, so the model read
+        # every result twice - once JSON-escaped inside a text block and once as
+        # structured_content (63,717 chars for a 30,487-char NetBox response;
+        # 2.4x across a full benchmark run, measured 2026-10-20). With it, only the
+        # content blocks reach the model and the artifact stays on the message.
         return StructuredTool.from_function(
             coroutine=validated_func,  # Use coroutine parameter for async functions
             name=tool.name,
             description=tool.description,
             args_schema=tool.args_schema if hasattr(tool, "args_schema") else None,
+            response_format="content_and_artifact",
         )
 
 

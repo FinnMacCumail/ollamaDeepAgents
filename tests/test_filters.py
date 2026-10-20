@@ -448,3 +448,34 @@ def test_index_version_warning():
     assert index_version_warning(None) is None
     w = index_version_warning("4.3.5")
     assert w and "4.3.5" in w and "build_netbox_filter_index" in w
+
+
+class TestWrapperReturnsContentAndArtifact:
+    """The adapter's MCP tools return (content_blocks, artifact). Rebuilding them
+    without response_format="content_and_artifact" stringified the whole pair into
+    the ToolMessage, so the model read every result twice (2026-10-20)."""
+
+    @pytest.mark.asyncio
+    async def test_content_only_reaches_the_message(self):
+        from langchain_core.tools import StructuredTool
+        from src.tools.netbox_tools import NetBoxToolWrapper
+
+        blocks = [{"type": "text", "text": '{"count": 1, "results": [{"id": 149}]}'}]
+        artifact = {"structured_content": {"count": 1}}
+
+        async def fake(object_type: str, filters: dict | None = None, limit: int = 5):
+            return blocks, artifact
+
+        raw = StructuredTool.from_function(coroutine=fake, name="netbox_get_objects", description="x",
+                                           response_format="content_and_artifact")
+        wrapped = NetBoxToolWrapper.__new__(NetBoxToolWrapper)
+        from src.tools.netbox_tools import FilterValidator
+        wrapped.validator = FilterValidator()
+        tool = wrapped._wrap_tool_with_validation(raw)
+        msg = await tool.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "filters": {"tenant_id": 14}}, "id": "c1", "type": "tool_call"})
+        assert msg.content == blocks, msg.content          # not a str starting with "[["
+        assert msg.artifact == artifact
+        # a validation error is still a plain string content, with no artifact
+        msg = await tool.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "filters": {"device_role_id": 5}}, "id": "c2", "type": "tool_call"})
+        assert isinstance(msg.content, str) and msg.content.startswith("TOOL_VALIDATION_ERROR")
+        assert msg.artifact is None

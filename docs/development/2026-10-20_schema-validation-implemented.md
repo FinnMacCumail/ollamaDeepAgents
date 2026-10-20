@@ -114,3 +114,40 @@ real traffic and the effect of the null wire fix plus the smaller results (turn 
 outlets-in-use question: 55 s against 168–177 s on the three earlier runs, one call). Turn 4
 is now the two-call shape the 19 October guidance described. One run, as always; the
 schema layers' own evidence is the offline replay above.
+
+## Follow-up the same afternoon: tool results reached the model twice (bug fix)
+
+Found while reading a 377 s web-chat turn on 19 October and confirmed on the 20 October
+benchmark run: `NetBoxToolWrapper._wrap_tool_with_validation` rebuilt each MCP tool with
+`StructuredTool.from_function` but without `response_format="content_and_artifact"`. The
+adapter's coroutine returns `(content_blocks, artifact)`, so LangChain stringified the
+whole pair into `ToolMessage.content`: the JSON once inside a text block with every quote
+backslash-escaped, then again as `structured_content`. Measured on the 20 October run: 361
+of 404 tool messages had this shape, 4.85M characters in total of which the real data was
+1.99M, so the model prefilled about 2.4x the necessary tool text on every call since the
+wrapper was written.
+
+**Fix.** The wrapper now declares `response_format="content_and_artifact"` and every path
+returns a pair: the adapter's `(content, artifact)` unchanged, error strings as
+`(message, None)`. Only the content blocks reach the model; the artifact stays on the
+message for anything that wants it. Unit test: a fake content-and-artifact tool invoked as a
+tool call yields `content == blocks` (not a string) and the artifact intact; a validation
+error yields a plain string and no artifact.
+**Gate (live, the 68-device query from the 11:30 trace):** 63,717 → **27,076** characters
+reaching the model, same data. Session ladder result below.
+
+**Ladder gate for the tuple fix** (`docs/traces/2026-10-20_netbox-session_tuple-fix.*`, 12:39–13:02,
+same 11 questions):
+
+| | 2026-10-20 morning (schema layers) | **2026-10-20 afternoon (+ tuple fix)** |
+|---|---|---|
+| total · tool calls · correct of 10 | 971 s · 15 · 10.0 | **839 s · 17 · 10.0** |
+| context after turn 4 (PDU question) · turn 9 · end | 31,952 · 55,162 · 70,321 | **13,418 · 34,729 · 40,911** |
+| turn 4 outlets per PDU | 149 s · 2 calls | 95 s · 4 calls |
+| turn 5 outlets in use | 55 s · 1 | 131 s · 1 (a larger outlet fetch this time) |
+| decode at turn 10 | 14.4 tok/s | 14.6 tok/s |
+| validation errors fired | 0 | 0 |
+
+14% less time with two more calls, perfect score again, and 42% less context at the end of
+the session: the same tool results now arrive once and unescaped. One run each; the full v5
+harness (step 6) remains the measurement.

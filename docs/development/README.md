@@ -18,7 +18,9 @@ This directory contains:
 **Key points:**
 - Replay gate over 1,237 recorded calls: 52/52 unknown-key calls rejected, 0 false positives, hand rules intact.
 - Index: 145 endpoints, 11,520 params, 919 enums, 126/126 object types, 27.6 KB, 1 ms load; version warning at agent start.
-- Session ladder: **971 s / 15 calls / 10 of 10**, against 1,248 / 16 / 9.5 the day before; 0 validator rejections (no false positives). Full v5 run (step 6) held back on purpose.
+- Same afternoon: the wrapper rebuilt MCP tools without `response_format="content_and_artifact"`, so every tool result reached the model twice (escaped text + structured copy, 2.4x across a run); fixed, 63,717 → 27,076 chars on the 68-device query.
+- Session ladder after the tuple fix: **839 s / 17 calls / 10 of 10**, context at end 40,911 vs 70,321 tokens.
+- Session ladder (before the tuple fix): **971 s / 15 calls / 10 of 10**, against 1,248 / 16 / 9.5 the day before; 0 validator rejections (no false positives). Full v5 run (step 6) held back on purpose.
 
 ### [2026-10-20: OpenAPI schema driven filter validation (research)](2026-10-20_openapi-schema-driven-filter-validation.md)
 **Research report (four notes + prototype replay in `2026-10-20_openapi-validation-notes/`):** should the validator check filter keys against NetBox's OpenAPI schema? Yes, as layers in front of the hand rules: 54 true catches, 0 false positives on 1,237 recorded calls; graphql-core `validate` reproduces NetBox's messages; found that JSON null never reached NetBox and that `__regex` is silently ignored on 4.3.3.
