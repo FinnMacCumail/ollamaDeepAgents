@@ -13,6 +13,16 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-10-20: Schema-driven filter validation, implemented](2026-10-20_schema-validation-implemented.md)
+**Implementation of the research plan (steps 0–5, 7):** filter names and enum values are now checked against a vendored index of NetBox's OpenAPI schema (`scripts/build_netbox_filter_index.py` → `src/tools/netbox_filter_index.json.gz`); GraphQL documents are validated with `graphql.validate` against the introspected schema; JSON null is normalised to `"null"` on the wire (it was being dropped); `regex`/`iregex` and GraphQL `ordering` un-whitelisted.
+**Key points:**
+- Replay gate over 1,237 recorded calls: 52/52 unknown-key calls rejected, 0 false positives, hand rules intact.
+- Index: 145 endpoints, 11,520 params, 919 enums, 126/126 object types, 27.6 KB, 1 ms load; version warning at agent start.
+- Session ladder: **971 s / 15 calls / 10 of 10**, against 1,248 / 16 / 9.5 the day before; 0 validator rejections (no false positives). Full v5 run (step 6) held back on purpose.
+
+### [2026-10-20: OpenAPI schema driven filter validation (research)](2026-10-20_openapi-schema-driven-filter-validation.md)
+**Research report (four notes + prototype replay in `2026-10-20_openapi-validation-notes/`):** should the validator check filter keys against NetBox's OpenAPI schema? Yes, as layers in front of the hand rules: 54 true catches, 0 false positives on 1,237 recorded calls; graphql-core `validate` reproduces NetBox's messages; found that JSON null never reached NetBox and that `__regex` is silently ignored on 4.3.3.
+
 ### [2026-10-19: The search tool could not see tenants, and a count question fetched the children](2026-10-19_search-cannot-see-tenants.md)
 **Correction (MCP server search defaults + skill + prompt):** a 377 s / 9-call web-chat turn traced to `netbox_search_objects` returning eight empty lists for a tenant name (tenants were not in its default types), then two 73 KB / 46 KB child fetches where one role-filtered device query with `power_outlet_count` (2.7 KB) answers the question.
 **Key points:**

@@ -28,6 +28,7 @@ Live-verified facts (2026-07-20, NetBox 4.3/4.4 Strawberry line):
 """
 
 import json
+import re
 import os
 
 import httpx
@@ -38,6 +39,7 @@ from graphql import (
     parse,
 )
 from graphql.error import GraphQLError
+from graphql import GraphQLError, GraphQLID, GraphQLSchema, get_named_type, validate
 from graphql.language.ast import (
     FieldNode,
     ListValueNode,
@@ -45,6 +47,7 @@ from graphql.language.ast import (
     ObjectValueNode,
     OperationDefinitionNode,
 )
+from graphql.validation import ValidationRule, specified_rules
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -171,7 +174,61 @@ def _validate_read_only(query: str) -> str | None:
     if depth > GQL_MAX_DEPTH:
         return f"query nesting depth {depth} exceeds the limit of {GQL_MAX_DEPTH}"
 
-    return _validate_filter_grammar(document)
+    # NetBox runtime limit (GRAPHQL_MAX_ALIASES, default 10); not expressible in
+    # the schema, so graphql.validate cannot see it.
+    n_aliases = sum(
+        1 for defn in document.definitions if isinstance(defn, OperationDefinitionNode)
+        for field in _iter_fields(defn.selection_set) if field.alias is not None
+    )
+    if n_aliases > GQL_MAX_ALIASES:
+        return (
+            f"{n_aliases} aliased queries; NetBox allows {GQL_MAX_ALIASES}. Split the "
+            f"document, or filter on a parent (site_id/tenant_id) and select client-side"
+        )
+    return None
+
+
+class NoNullIdFilterRule(ValidationRule):
+    """`tenant_id: null` (any ID-typed input field) validates clean - 324 of 325
+    ID input fields are nullable - but NetBox silently ignores it and returns
+    every object (verified 2026-10-20: 141 of 141 devices). Schema-aware
+    replacement for the old name-based `*_id` rule."""
+
+    def enter_object_field(self, node, *_):
+        t = self.context.get_input_type()
+        if t is not None and get_named_type(t) is GraphQLID and isinstance(node.value, NullValueNode):
+            self.report_error(GraphQLError(
+                f"'{node.name.value}: null' is silently ignored by NetBox (returns every object). "
+                f"For unassigned objects use the REST tool: netbox_get_objects(<type>, "
+                f"filters={{'{node.name.value}': 'null'}})",
+                node,
+            ))
+
+
+# graphql-core's messages are byte-identical to NetBox's (its Strawberry layer is
+# graphql-core) and carry "Did you mean" for names, but say nothing about the fix
+# for these two shapes; append the hint the hand rules used to give.
+_GQL_HINTS = (
+    (re.compile(r"Unknown argument '(limit|offset)'"), "Paging is pagination: {limit: <n>, offset: <n>}."),
+    (re.compile(r"ID cannot represent a non-string and non-integer value"),
+     "An ID key takes ONE bare id. For several objects use a string lookup (name: {in_list: [...]}), "
+     "a parent filter (site_id, tenant_id), or up to 10 aliased queries with one id each."),
+)
+
+
+def _validate_against_schema(schema: GraphQLSchema, document) -> str | None:
+    errors = validate(schema, document, rules=[*specified_rules, NoNullIdFilterRule])
+    if not errors:
+        return None
+    lines = []
+    for e in errors[:8]:
+        msg = e.message
+        for pat, hint in _GQL_HINTS:
+            if pat.search(msg):
+                msg = f"{msg} {hint}"
+        loc = f" (line {e.locations[0].line}, column {e.locations[0].column})" if e.locations else ""
+        lines.append(f"{msg}{loc}")
+    return "; ".join(lines)
 
 
 # Grammar pre-checks for mistakes the model made repeatedly in the v5 runs
@@ -179,7 +236,7 @@ def _validate_read_only(query: str) -> str | None:
 # model round trip). Each rule is verified against NetBox 4.3.3's strawberry
 # schema on 2026-10-18. See docs/development/2026-10-18_filter-naming-after-in.md.
 GQL_MAX_ALIASES: int = 10  # NetBox: "12 aliases found. Allowed: 10"
-_LIST_FIELD_ARGS = frozenset({"filters", "pagination", "ordering"})
+_LIST_FIELD_ARGS = frozenset({"filters", "pagination"})  # no _list field takes "ordering" on 4.3.3 (introspected 2026-10-20)
 
 
 def _iter_fields(selection_set):
@@ -233,15 +290,13 @@ def _check_filter_object(obj: ObjectValueNode, where: str, path: str = "") -> st
 
 
 def _validate_filter_grammar(document) -> str | None:
-    """Return an error message for filter-grammar mistakes NetBox would reject
-    (or silently ignore), else None. Runs before any HTTP request."""
-    n_aliases = 0
+    """Hand-written fallback for when the introspected schema is unavailable:
+    the grammar mistakes NetBox would reject (or silently ignore). With a schema
+    present, graphql.validate + NoNullIdFilterRule replace these rules."""
     for defn in document.definitions:
         if not isinstance(defn, OperationDefinitionNode):
             continue
         for field in _iter_fields(defn.selection_set):
-            if field.alias is not None:
-                n_aliases += 1
             fname = field.name.value
             if not fname.endswith("_list"):
                 continue
@@ -263,11 +318,6 @@ def _validate_filter_grammar(document) -> str | None:
                     err = _check_filter_object(arg.value, f"'{fname}(filters: ...)'")
                     if err:
                         return err
-    if n_aliases > GQL_MAX_ALIASES:
-        return (
-            f"{n_aliases} aliased queries; NetBox allows {GQL_MAX_ALIASES}. Split the "
-            f"document, or filter on a parent (site_id/tenant_id) and select client-side"
-        )
     return None
 
 
@@ -307,6 +357,13 @@ async def execute_graphql(
         logger.warning("Rejected non-read-only/malformed GraphQL", reason=err)
         return _validation_error(err)
 
+    document = parse(query)
+    schema = await _ensure_schema(cfg, transport)
+    err = _validate_against_schema(schema, document) if schema is not None else _validate_filter_grammar(document)
+    if err is not None:
+        logger.warning("Rejected GraphQL document before HTTP", reason=err, schema_backed=schema is not None)
+        return _validation_error(err)
+
     payload = {"query": query, "variables": variables or {}}
     try:
         async with httpx.AsyncClient(timeout=GQL_TIMEOUT, transport=transport) as client:
@@ -339,6 +396,51 @@ async def execute_graphql(
     return {"data": data.get("data"), "errors": data.get("errors")}
 
 
+async def _introspect(cfg: NetBoxConfig, transport) -> GraphQLSchema | str:
+    """Fetch and cache the endpoint's schema (introspection ~1.1 MB in ~0.6 s,
+    build ~0.2 s, measured 2026-10-20). Returns a TOOL_API_ERROR string on failure."""
+    endpoint = _endpoint(cfg)
+    introspection = get_introspection_query(descriptions=False)
+    try:
+        async with httpx.AsyncClient(timeout=GQL_TIMEOUT, transport=transport) as client:
+            resp = await client.post(endpoint, json={"query": introspection}, headers=_headers(cfg))
+    except httpx.TimeoutException:
+        return _api_error(f"introspection timed out after {GQL_TIMEOUT}s")
+    except httpx.HTTPError as e:
+        return _api_error(_sanitize(f"introspection transport error: {e}", cfg))
+    if resp.status_code >= 400:
+        return _api_error(f"introspection failed (HTTP {resp.status_code})")
+    try:
+        result = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return _api_error("introspection response was not valid JSON")
+    if result.get("errors") or not result.get("data"):
+        return _api_error("introspection is disabled or returned no schema on this instance")
+    try:
+        schema = build_client_schema(result["data"])
+    except Exception as e:  # noqa: BLE001 - surface any schema-build failure to the model
+        return _api_error(_sanitize(f"could not build schema: {e}", cfg))
+    _schema_cache[endpoint] = schema
+    return schema
+
+
+async def _ensure_schema(cfg: NetBoxConfig, transport) -> GraphQLSchema | None:
+    """Cached schema for validation, or None (fail-open to the hand rules) when
+    introspection is unavailable - e.g. a transport that refuses requests in
+    tests, or an instance with introspection disabled."""
+    schema = _schema_cache.get(_endpoint(cfg))
+    if schema is None:
+        try:
+            schema = await _introspect(cfg, transport)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("GraphQL introspection failed; validating with hand rules", error=str(e))
+            return None
+        if isinstance(schema, str):
+            logger.warning("GraphQL introspection unavailable; validating with hand rules", reason=schema[:120])
+            return None
+    return schema
+
+
 async def discover_schema(
     cfg: NetBoxConfig,
     type_name: str | None = None,
@@ -350,32 +452,9 @@ async def discover_schema(
     schema = _schema_cache.get(endpoint)
 
     if schema is None:
-        introspection = get_introspection_query(descriptions=False)
-        try:
-            async with httpx.AsyncClient(timeout=GQL_TIMEOUT, transport=transport) as client:
-                resp = await client.post(
-                    endpoint, json={"query": introspection}, headers=_headers(cfg)
-                )
-        except httpx.TimeoutException:
-            return _api_error(f"introspection timed out after {GQL_TIMEOUT}s")
-        except httpx.HTTPError as e:
-            return _api_error(_sanitize(f"introspection transport error: {e}", cfg))
-
-        if resp.status_code >= 400:
-            return _api_error(f"introspection failed (HTTP {resp.status_code})")
-        try:
-            result = resp.json()
-        except (json.JSONDecodeError, ValueError):
-            return _api_error("introspection response was not valid JSON")
-        if result.get("errors") or not result.get("data"):
-            return _api_error(
-                "introspection is disabled or returned no schema on this instance"
-            )
-        try:
-            schema = build_client_schema(result["data"])
-        except Exception as e:  # noqa: BLE001 - surface any schema-build failure to the model
-            return _api_error(_sanitize(f"could not build schema: {e}", cfg))
-        _schema_cache[endpoint] = schema
+        schema = await _introspect(cfg, transport)
+        if isinstance(schema, str):
+            return schema
 
     if type_name is None:
         query_type = getattr(schema, "query_type", None)

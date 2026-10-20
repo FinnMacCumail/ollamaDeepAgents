@@ -112,6 +112,9 @@ def invalid_filters():
         {"interface__device__name": "router01"},
         # Django-form lookup suffixes (correct MCP forms: __ic, __isw, __iew, __ie)
         {"name__icontains": "dunder"},
+        # silently ignored on NetBox 4.3.3 (regex lookups arrive in 4.3.5)
+        {"name__regex": "^core-"},
+        {"name__iregex": "^core-"},
         {"name__contains": "dunder"},
         {"name__startswith": "core-"},
         {"name__endswith": "-01"},
@@ -145,7 +148,6 @@ def valid_filters():
         {"created__gte": "2024-01-01"},
         {"created__gt": "2024-01-01"},
         {"vid__lt": 100},
-        {"status__regex": "^act"},
         {"serial__empty": "true"},
     ]
 

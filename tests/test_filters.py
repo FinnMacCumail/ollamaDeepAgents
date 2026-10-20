@@ -48,8 +48,9 @@ class TestFilterValidator:
         """Test detection of Django ORM lookups that lack a valid MCP equivalent.
 
         Note: Django spellings like `__icontains` are NOT on the MCP server's
-        whitelist (which uses short forms like `__ic`). But `__gte`, `__regex`
-        etc. ARE on the whitelist and must NOT be rejected. `__in` is the one
+        whitelist (which uses short forms like `__ic`). But `__gte` etc. ARE on
+        the whitelist and must NOT be rejected (`__regex`/`__iregex` were dropped on
+        2026-10-20: silently ignored on NetBox 4.3.3). `__in` is the one
         suffix the MCP server lists that this validator rejects: NetBox 4.3
         silently ignores it and returns the unfiltered set (verified live,
         2026-10-06), so the list-form bare key is the only multi-value form.
@@ -85,8 +86,6 @@ class TestFilterValidator:
             {"created__gt": "2024-01-01"},
             {"vid__lt": 100},
             {"vid__lte": 100},
-            {"status__regex": ".*active.*"},
-            {"name__iregex": "^router-.*"},
             {"name__ic": "switch"},
             {"name__n": "decom"},
         ]
@@ -304,8 +303,10 @@ class TestNullRelationAndContainmentFilters:
             is_valid, error = validator.validate_filter({key: "10.0.0.0/8"}, "ipam.ipaddress")
             assert is_valid is False, key
             assert "parent" in error
+            assert validator.validate_filter({key: "10.0.0.0/8"})[0] is True  # type unknown: hand rules only
+        for key in ("within", "within_include", "contains"):  # real prefix filters, schema-listed
             assert validator.validate_filter({key: "10.0.0.0/8"}, "ipam.prefix")[0] is True
-            assert validator.validate_filter({key: "10.0.0.0/8"})[0] is True  # type unknown
+        assert validator.validate_filter({"without": "10.0.0.0/8"}, "ipam.prefix")[0] is False  # no such NetBox filter
         assert validator.validate_filter({"parent": "10.0.0.0/8"}, "ipam.ipaddress")[0] is True
         assert "parent" in validator.suggest_alternative("within")
 
@@ -313,7 +314,7 @@ class TestNullRelationAndContainmentFilters:
         validator = FilterValidator()
         is_valid, error = validator.validate_filter({"vrf": "hvl-guest"}, "ipam.ipaddress")
         assert is_valid is False and "vrf_id" in error
-        assert validator.validate_filter({"vrf": "65000:1"}, "dcim.device")[0] is True
+        assert validator.validate_filter({"vrf": "65000:1"})[0] is True  # no object type: ipam-only hand rule does not apply
         assert "vrf_id" in validator.suggest_alternative("vrf")
 
 
@@ -368,3 +369,82 @@ class TestChangelogAction:
         assert mw._detect_error_type(msg) == "changelog_action"
         strategy = mw._generate_recovery_strategy("changelog_action", "action", msg)
         assert strategy["approach"] == "bare_verb_action"
+
+
+class TestWireNormalisationAndRegex:
+    """2026-10-20 (OpenAPI research): JSON null never reached NetBox because
+    `requests` drops None params; booleans must be the strings NetBox parses;
+    __regex/__iregex are silently ignored on 4.3.3."""
+
+    def test_none_and_bool_become_wire_strings(self):
+        from src.tools.netbox_tools import normalise_filter_values
+        out = normalise_filter_values({"tenant_id": None, "has_primary_ip": False, "role_id": [1, None], "name": "x", "vid": 100})
+        assert out == {"tenant_id": "null", "has_primary_ip": "false", "role_id": [1, "null"], "name": "x", "vid": 100}
+        assert normalise_filter_values({}) == {}
+        assert normalise_filter_values(None) == {}
+
+    def test_regex_rejected_with_anchored_hint(self):
+        validator = FilterValidator()
+        for key in ("name__regex", "name__iregex"):
+            is_valid, error = validator.validate_filter({key: "^core-"})
+            assert is_valid is False, key
+            hint = validator.suggest_alternative(key)
+            assert "silently ignored" in hint and "__isw" in hint
+
+
+class TestSchemaLayers:
+    """Key existence and enum membership from the vendored OpenAPI index
+    (src/tools/netbox_filter_index.json.gz); see
+    docs/development/2026-10-20_openapi-schema-driven-filter-validation.md."""
+
+    def test_index_loads_and_resolves_object_types(self):
+        from src.tools.netbox_tools import load_filter_index, endpoint_params
+        idx = load_filter_index()
+        assert idx and idx["netbox_version"].startswith("4.3")
+        assert len(idx["endpoints"]) >= 140 and len(idx["object_types"]) >= 120
+        assert "role_id" in endpoint_params("dcim.device")
+        assert endpoint_params("not.a.type") is None
+
+    def test_unknown_key_rejected_with_rename_suggestion(self):
+        validator = FilterValidator()
+        for bad, good, ot in (("device_role_id", "role_id", "dcim.device"), ("devicerole_id", "role_id", "dcim.device"),
+                              ("device_role", "role", "dcim.device"), ("circuit_type_id", "type_id", "circuits.circuit"),
+                              ("vlan_group_id", "group_id", "ipam.vlan"), ("parent_prefix", "parent", "ipam.ipaddress")):
+            is_valid, error = validator.validate_filter({bad: 5}, ot)
+            assert is_valid is False, bad
+            assert "UNFILTERED" in error, (bad, error)
+            assert f"'{good}'" in validator.suggest_alternative(bad, ot), (bad, validator.suggest_alternative(bad, ot))
+
+    def test_known_keys_pass(self):
+        validator = FilterValidator()
+        assert validator.validate_filter({"role_id": 5, "tenant_id": 14, "name__ic": "pdu"}, "dcim.device")[0] is True
+        assert validator.validate_filter({"parent": "10.0.0.0/8", "vrf_id": "null"}, "ipam.ipaddress")[0] is True
+
+    def test_enum_values_checked(self):
+        validator = FilterValidator()
+        is_valid, error = validator.validate_filter({"status": "Active"}, "dcim.device")
+        assert is_valid is False and "active" in error and "decommissioning" in error
+        assert validator.validate_filter({"status": ["active", "planned"]}, "dcim.device")[0] is True
+
+    def test_exempt_and_fail_open(self):
+        validator = FilterValidator()
+        assert validator.validate_filter({"cf_cust_id": "x", "fields": "id", "q": "hq"}, "tenancy.tenant")[0] is True
+        assert validator.validate_filter({"anything": 1}, "no.such.type")[0] is True  # unknown type: hand rules only
+        assert validator.validate_filter({"anything": 1})[0] is True  # no object type
+
+    def test_no_negation_suggested_for_in_family(self):
+        from src.tools.netbox_tools import _schema_suggestion, endpoint_params
+        params = endpoint_params("dcim.powerfeed")
+        for key in ("site_id__in", "site_id__isnull", "tenant__empty"):
+            msg = _schema_suggestion(key, params)
+            assert "__n" not in msg, (key, msg)
+
+
+def test_index_version_warning():
+    from src.tools.netbox_tools import index_version_warning, load_filter_index
+    stamped = load_filter_index()["netbox_version"]
+    assert index_version_warning(stamped) is None
+    assert index_version_warning("4.3.3-Docker-3.3.0 (4.3)") is None
+    assert index_version_warning(None) is None
+    w = index_version_warning("4.3.5")
+    assert w and "4.3.5" in w and "build_netbox_filter_index" in w

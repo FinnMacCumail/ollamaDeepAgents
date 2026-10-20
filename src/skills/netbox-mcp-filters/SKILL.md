@@ -376,6 +376,8 @@ filters={"tenant__n": None}          # the COMPLEMENT: devices that HAVE a tenan
 
 The validator now rejects `<relation>__empty` and `<relation>__n: null` with the correct
 form in the message. For "has no primary IP" NetBox also offers `{"has_primary_ip": "false"}`.
+On the wire the value must be the string `"null"` (HTTP clients drop a JSON null); the tool
+wrapper converts `None` and booleans for you, so either spelling works from here.
 
 ## TENANTS OWN CIRCUITS; PROVIDERS SUPPLY THEM
 
@@ -493,11 +495,19 @@ What they mean:
 | `iew` / `niew` | (not) case-insensitive ends-with | `{"name__iew": "-01"}` |
 | `ie` / `nie` | (not) case-insensitive exact | `{"name__ie": "Router01"}` |
 | `empty` | string field is empty — **STRING FIELDS ONLY** | `{"serial__empty": "true"}`. On a relation (`tenant__empty`, `site__empty`) it is **silently ignored** — the UNFILTERED set comes back (verified live: 141 of 141). See UNASSIGNED RELATIONS below |
-| `regex` / `iregex` | regex match (case-sensitive / -insensitive) | `{"name__iregex": "^core-.*-01$"}` |
+| `regex` / `iregex` | **NOT on NetBox 4.3.3** — silently ignored (arrives in 4.3.5); use `isw` / `iew` / `ic` | — |
 | `lt` / `lte` / `gt` / `gte` | numeric / datetime comparisons | `{"created__gt": "2026-05-01T00:00:00Z"}` |
 
 `in` is **not** a valid suffix even though the MCP server's description lists it: NetBox
 ignores `__in` silently. Multi-value is always the bare key with a list — `{"id": [1, 2, 3]}`.
+
+**Filter NAMES are checked against NetBox's own schema** (2026-10-20). NetBox silently drops
+any filter key its filterset does not define and returns the whole table with HTTP 200. The
+tool now rejects such keys before the call, naming the real filter: `device_role_id` →
+`role_id`, `circuit_type_id` / `cluster_type_id` → `type_id`, `vlan_group_id` → `group_id`,
+`contact_role_id` → `role_id`, `parent_prefix` → `parent`, `cable_id` → `cable`. If a
+`TOOL_VALIDATION_ERROR` says a key "is not a filter on <type>", use the filter it names; do
+not retry the same key. Enum values are checked too (`status: "Active"` → `active`).
 
 **Common mistake**: the model often writes `name__icontains` or `name__contains` (Django
 ORM idioms). Neither is valid — use `name__ic` instead. Same for `__startswith` → `__isw`,

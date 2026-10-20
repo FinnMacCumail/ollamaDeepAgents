@@ -35,10 +35,25 @@ The NetBox MCP server accepts a **narrow** filter grammar. The `FilterValidator`
 `src/tools/netbox_tools.py` enforces it locally so the model gets a structured, recoverable
 error instead of an opaque HTTP 400.
 
-`VALID_SUFFIXES` (the MCP server's whitelist minus `in`):
+`VALID_SUFFIXES` (the MCP server's whitelist minus `in`, `regex`, `iregex`):
 ```
-n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte
+n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, lt, lte, gt, gte
 ```
+`regex`/`iregex` were dropped on 2026-10-20: NetBox 4.3.3 silently ignores them (the lookup
+arrives in 4.3.5).
+
+**Schema layers (2026-10-20).** After the hand rules, `validate_filter` checks every key
+against the per-endpoint parameter list of NetBox's OpenAPI document, vendored as
+`src/tools/netbox_filter_index.json.gz` by `scripts/build_netbox_filter_index.py` (re-run
+after a NetBox upgrade; the agent warns at start when `/api/status/` reports a different
+version), and enum values against the schema's enum tables. Unknown keys are rejected with
+the real filter named (`device_role_id` -> `role_id`); `fields`, `brief`, `q`, `limit`,
+`offset`, `ordering`, `export`, `format` and `cf_*` are exempt; no index or unknown object
+type -> fail-open to the hand rules. Replay gate: `scripts/replay_filter_validator.py`
+(needs the research data under `tmp/research/`). The tool wrapper also normalises `None`
+-> `"null"` and booleans -> `"true"/"false"` (HTTP clients drop JSON null). GraphQL documents
+are validated with `graphql.validate` against the introspected schema plus
+`NoNullIdFilterRule`; the hand-written grammar rules are only the fallback.
 `in` is deliberately excluded: the MCP server lists it, but NetBox 4.3 silently ignores
 `<field>__in` and returns the unfiltered set (verified live 2026-10-06, see
 `docs/development/2026-10-06_in-lookup-silently-ignored.md`). Multi-value is the bare key

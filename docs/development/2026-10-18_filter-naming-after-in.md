@@ -63,6 +63,16 @@ starts_with, i_starts_with, ends_with, i_ends_with, regex, i_regex` — so `{nam
 unknown argument. Alias cap is 10. **The GraphQL skill stated that `{id: [6, 7, 8]}` is
 valid**; six of October's twenty GraphQL failures were the model following that line.
 
+
+> **Corrected 2026-10-20.** Two statements above were wrong. (1) The "`_id: null` used
+> correctly" counts (13 on 18 Oct, 16 on 19 Oct) were *unfiltered* queries: the MCP client
+> builds `requests` params from the filters dict and `requests` drops `None`, so
+> `{"tenant_id": None}` reached NetBox as no filter at all (141 of 141). The agent's tool
+> wrapper now normalises `None` to the string `"null"` (15 of 141) before the call. (2)
+> `ipam/ip-addresses/?without=...` was recorded as a 400; re-checked, it is a 200 that
+> returns every address, i.e. silently ignored like `within`. See
+> `2026-10-20_openapi-schema-driven-filter-validation.md`.
+
 ## Changes
 
 1. **`src/tools/netbox_tools.py`** — `validate_filter(filter_dict, object_type=None)`:

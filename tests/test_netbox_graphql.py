@@ -358,3 +358,92 @@ async def test_nested_bare_id_and_string_lookups_pass(cfg, query):
     body = {"data": {"device_list": []}, "errors": None}
     result = await execute_graphql(cfg, query, transport=_json_transport(body))
     assert isinstance(result, dict)
+
+
+async def test_ordering_argument_rejected(cfg):
+    """No _list field takes `ordering` on NetBox 4.3.3; the old pre-check let it through."""
+    result = await execute_graphql(cfg, 'query { device_list(ordering: "name") { id } }', transport=_forbidden_transport())
+    assert isinstance(result, str) and result.startswith("TOOL_VALIDATION_ERROR") and "ordering" in result
+
+
+# ------------------------------------------- schema-backed validation (2026-10-20) ---
+# execute_graphql now validates the document against the introspected schema with
+# graphql-core's standard rules plus NoNullIdFilterRule; the hand-written grammar
+# rules are only the fallback when introspection is unavailable. The transport
+# below serves a NetBox-shaped introspection first, then refuses any query.
+
+_NETBOX_LIKE_SDL = """
+input StrFilterLookup { exact: String i_contains: String in_list: [String!] is_null: Boolean }
+input OffsetPaginationInput { offset: Int = 0 limit: Int = -1 }
+input SiteFilter { id: ID name: StrFilterLookup region: RegionFilter }
+input RegionFilter { id: ID }
+input TenantFilter { id: ID }
+input DeviceFilter { id: ID site_id: ID tenant_id: ID name: StrFilterLookup site: SiteFilter tenant: TenantFilter OR: DeviceFilter }
+type SiteType { id: ID! name: String! }
+type DeviceType { id: ID! name: String! site: SiteType }
+type Query {
+  device_list(filters: DeviceFilter, pagination: OffsetPaginationInput): [DeviceType!]!
+  site_list(filters: SiteFilter, pagination: OffsetPaginationInput): [SiteType!]!
+}
+"""
+
+
+def _schema_then_transport(after: httpx.MockTransport | None = None, body: dict | None = None):
+    """Serve introspection from the NetBox-like SDL; route anything else to `after`
+    (default: refuse, so a validation failure is proven to happen before HTTP)."""
+    schema = build_schema(_NETBOX_LIKE_SDL)
+    intro = graphql_sync(schema, get_introspection_query(descriptions=False))
+    assert intro.errors is None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if b"__schema" in request.content:
+            return httpx.Response(200, json={"data": intro.data})
+        if body is not None:
+            return httpx.Response(200, json=body)
+        raise AssertionError("HTTP request made for a document that should have failed validation")
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize("query, needle", [
+    ('query { device_list(filter: {id: 1}) { id } }', "Did you mean 'filters'"),
+    ('query { device_list(filters: {id: [146, 147]}) { id } }', "ONE bare id"),
+    ('query { device_list(filters: {site_id: {in_list: ["1"]}}) { id } }', "ID cannot represent"),
+    ('query { device_list(filters: {tenant: {id: {exact: 14}}}) { id } }', "ID cannot represent"),
+    ('query { device_list(filters: {tenant_id: null}) { id } }', "silently ignored"),
+    ('query { device_list(filters: {tenant: {id: null}}) { id } }', "silently ignored"),
+    ('query { device_list(filters: {name: {icontains: "x"}}) { id } }', "Did you mean"),
+    ('query { device_list(filters: {tenant_name: "x"}) { id } }', "is not defined by type 'DeviceFilter'"),
+    ('query { device_list(limit: 1000) { id } }', "pagination: {limit"),
+    ('query { device_list(ordering: "name") { id } }', "Unknown argument 'ordering'"),
+    ('query { device_list { id virtualmachine_count } }', "Cannot query field 'virtualmachine_count'"),
+    ('query { device_list { id site { nope } } }', "Cannot query field 'nope'"),
+])
+async def test_schema_validation_rejects_before_http(cfg, query, needle):
+    result = await execute_graphql(cfg, query, transport=_schema_then_transport())
+    assert isinstance(result, str), result
+    assert result.startswith("TOOL_VALIDATION_ERROR")
+    assert needle in result, result
+
+
+@pytest.mark.parametrize("query", [
+    'query { device_list(filters: {id: 6}) { id name } }',
+    'query { device_list(filters: {name: {in_list: ["a", "b"]}, site: {id: 3}}, pagination: {limit: 2, offset: 0}) { id site { name } } }',
+    'query { device_list(filters: {name: {is_null: true}}) { id } }',
+    'query { device_list(filters: {OR: {tenant_id: 14}}) { id } }',
+])
+async def test_schema_validation_passes_valid_documents(cfg, query):
+    result = await execute_graphql(cfg, query, transport=_schema_then_transport(body={"data": {"device_list": []}}))
+    assert isinstance(result, dict)
+
+
+async def test_alias_cap_still_enforced_with_schema(cfg):
+    q = 'query { ' + ' '.join(f'd{i}: device_list(filters: {{id: {i}}}) {{ id }}' for i in range(12)) + ' }'
+    result = await execute_graphql(cfg, q, transport=_schema_then_transport())
+    assert isinstance(result, str) and "NetBox allows 10" in result
+
+
+async def test_hand_rules_fallback_when_introspection_unavailable(cfg):
+    # the forbidden transport refuses introspection too -> fail-open to the hand rules
+    result = await execute_graphql(cfg, 'query { device_list(filter: {id: 1}) { id } }', transport=_forbidden_transport())
+    assert isinstance(result, str) and "'filters' (plural)" in result

@@ -25,7 +25,9 @@ llama.cpp backend (see `docs/setup/llamacpp.md`) is the data-never-leaves-the-bo
 2. **Understand the problem domain (the core constraint):**
    - The NetBox MCP server rejects multi-hop filters like `device__site_id`.
    - It rejects unsupported Django lookup suffixes. The validator's allow-list of suffixes is:
-     `n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, regex, iregex, lt, lte, gt, gte`.
+     `n, ic, nic, isw, nisw, iew, niew, ie, nie, empty, lt, lte, gt, gte` (no `regex` on 4.3.3),
+     and filter NAMES + enum values are checked against the vendored OpenAPI index
+     (`src/tools/netbox_filter_index.json.gz`, rebuilt by `scripts/build_netbox_filter_index.py`).
      `__in` is rejected on purpose: NetBox silently ignores it. Multi-value = bare key + list.
    - "No `<relation>` assigned" = `{"<relation>_id": None}` only; `__empty`/`__isnull` on a
      relation are silently ignored and `__n: None` inverts. `ipam.ipaddress` uses `parent`,
