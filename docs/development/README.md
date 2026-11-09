@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-11-09: Result envelope with a silently-unfiltered detector](2026-11-09_result-envelope.md)
+**Every `netbox_get_objects` / `netbox_get_changelogs` result now starts with a header (`NETBOX_RESULT scope=... matched_count=N returned_count=M complete=...`), an `INCOMPLETE:` line with the next offset, and a `WARNING:` when a filtered call returned exactly the endpoint's unfiltered total** — the valid-key, dropped-value case the schema layer cannot see (the JSON-null bug that hid for two runs). First of the three levers from the 27 October Platform MCP review.
+**Key points:**
+- One `?limit=1` GET per endpoint, cached 10 min (`UnfilteredTotals`); fail-open everywhere; non-list tools and error paths untouched.
+- On a hit, each scoped key is re-sent alone with an impossible value: ignored keys are named in the WARNING, honoured ones get a NOTE (the coincidences: `user_id=9` on change-logs, `device_type_id=8` on outlet templates). Replay: 25 of 533 scoped calls on 2026-10-18/19 hit the count rule, all ignored keys or dropped nulls, 0 honoured filters.
+- Ladder 1 (count-only rule) went 7/10 on a tenant-scope detour that began before the warnings; the probe was added in response. Ladder 2 (probe): 837 s / 24 calls / 10 of 10, against 840 / 17 / 10 of 10 on 2026-10-20.
+- Skill and system prompt tell the model to read the header first; session ladder gate recorded in `docs/traces/2026-11-09_netbox-session_result-envelope.*`.
+
 ### [2026-11-08: Strata as the inference server — same weights, 1.67× the agent speed](2026-11-08_strata-inference-server.md)
 **Switched the llamacpp backend to James's Strata 0.2.10 (closed ggml/llama.cpp-derived server, `:8080`, API key, one slot) serving the same UD-Q4_K_XL files;** three additions in `llamacpp_config.py` / `llama_status.py` (Bearer header on the `/models` and `/slots` probes, `timings.cache_n` fallback for the cached column, `timings` kept on non-streaming calls so every LangSmith model call carries server-side compute time).
 **Key points:**

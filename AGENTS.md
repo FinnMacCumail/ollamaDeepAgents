@@ -58,6 +58,23 @@ The wrapper rebuilds MCP tools with `response_format="content_and_artifact"` and
 `(content, artifact)` on every path; without it the whole pair was stringified into the
 ToolMessage and the model read every result twice (fixed 2026-10-20; 63,717 -> 27,076
 chars on a 68-device query).
+
+**Result envelope (2026-11-09).** `netbox_get_objects` / `netbox_get_changelogs` results get
+a header block in front of the rows: `NETBOX_RESULT scope={...} matched_count=N
+returned_count=M complete=true|false`, an `INCOMPLETE:` line naming the next offset when
+`next` is set, and, when a scoped call's `count` equals the endpoint's unfiltered total
+(`UnfilteredTotals`: one `?limit=1` GET per endpoint, cached 10 min), a probe of each scoped
+key alone with an impossible value: ignored keys (unchanged total) get `WARNING: filter(s) X
+had NO EFFECT`, honoured keys (400 or fewer) get `NOTE: ... honoured and happen to match
+every ...`. That is the silently-unfiltered case the schema layer cannot see (valid key,
+dropped value such as `has_primary_ip=no`; custom fields; a stale index). Replayed over the
+recorded runs: 25 of 533 scoped calls on 2026-10-18/19 hit the count rule, all ignored keys
+or dropped nulls, 0 honoured filters; coincidences (`user_id=9` on change-logs, `object_id=10`
+on contact-assignments, `device_type_id=8` on outlet templates) are resolved by the probe.
+Never warn on equal counts alone: the first ladder showed coincidences are common on small
+endpoints. Fail-open: no paginated payload, unknown endpoint or failed total -> header
+without a verdict, or no header at all. The skill and system prompt tell the model to read
+the header first. See `docs/development/2026-11-09_result-envelope.md`.
 `in` is deliberately excluded: the MCP server lists it, but NetBox 4.3 silently ignores
 `<field>__in` and returns the unfiltered set (verified live 2026-10-06, see
 `docs/development/2026-10-06_in-lookup-silently-ignored.md`). Multi-value is the bare key

@@ -1,5 +1,7 @@
 """Tests for MCP filter constraint handling and recovery."""
 
+import json
+
 import pytest
 
 from src.middleware.filter_recovery import FilterErrorRecoveryMiddleware
@@ -468,14 +470,151 @@ class TestWrapperReturnsContentAndArtifact:
 
         raw = StructuredTool.from_function(coroutine=fake, name="netbox_get_objects", description="x",
                                            response_format="content_and_artifact")
-        wrapped = NetBoxToolWrapper.__new__(NetBoxToolWrapper)
-        from src.tools.netbox_tools import FilterValidator
-        wrapped.validator = FilterValidator()
+        wrapped = NetBoxToolWrapper(mcp_client=None)
+        wrapped.totals.seed("/api/dcim/devices/", 141)
         tool = wrapped._wrap_tool_with_validation(raw)
         msg = await tool.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "filters": {"tenant_id": 14}}, "id": "c1", "type": "tool_call"})
-        assert msg.content == blocks, msg.content          # not a str starting with "[["
+        # the result header is the first block, the adapter's blocks follow unchanged
+        assert msg.content[0]["type"] == "text" and msg.content[0]["text"].startswith("NETBOX_RESULT ")
+        assert msg.content[1:] == blocks, msg.content          # not a str starting with "[["
         assert msg.artifact == artifact
         # a validation error is still a plain string content, with no artifact
         msg = await tool.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "filters": {"device_role_id": 5}}, "id": "c2", "type": "tool_call"})
         assert isinstance(msg.content, str) and msg.content.startswith("TOOL_VALIDATION_ERROR")
         assert msg.artifact is None
+
+
+class TestResultEnvelope:
+    """Every list result starts with a header (scope, matched/returned counts,
+    complete flag) and a WARNING when a scoped call returned the endpoint's whole
+    table - the silently-unfiltered case the schema layer cannot see (2026-11-09)."""
+
+    def _page(self, count, n, next_url=None):
+        return {"count": count, "next": next_url, "previous": None, "results": [{"id": i} for i in range(n)]}
+
+    def test_header_line_fields(self):
+        from src.tools.netbox_tools import result_header
+        h = result_header({"tenant_id": 14}, self._page(12, 12), 141, "dcim.device")
+        assert h == 'NETBOX_RESULT scope={"tenant_id":14} matched_count=12 returned_count=12 complete=true'
+
+    def test_incomplete_names_the_next_offset(self):
+        from src.tools.netbox_tools import result_header
+        h = result_header({}, self._page(14, 5, "http://x/?limit=5&offset=5"), None, "dcim.site")
+        assert "complete=false" in h
+        assert "INCOMPLETE: 5 of 14 returned" in h and "offset=5" in h
+        h = result_header({}, self._page(14, 5, "http://x/?offset=10"), None, "dcim.site", offset=5)
+        assert "offset=10" in h
+
+    def test_warning_names_ignored_keys_note_on_coincidence_ambiguous_without_probe(self):
+        from src.tools.netbox_tools import result_header
+        page = self._page(141, 100, "n")
+        h = result_header({"has_primary_ip": "no"}, page, 141, "dcim.device", ignored=["has_primary_ip"])
+        assert "WARNING: filter(s) has_primary_ip had NO EFFECT" in h and "all 141" in h and "netbox-mcp-filters" in h
+        h = result_header({"device_type_id": 8}, self._page(8, 8), 8, "dcim.poweroutlettemplate", ignored=[])
+        assert "WARNING" not in h and "NOTE: the filters are honoured and happen to match every dcim.poweroutlettemplate (8 of 8)" in h
+        h = result_header({"has_primary_ip": "no"}, page, 141, "dcim.device", ignored=None)
+        assert "WARNING: the filters had no effect or coincide with the whole table" in h
+
+    def test_no_warning_without_scope_or_below_total_or_empty(self):
+        from src.tools.netbox_tools import result_header
+        assert "WARNING" not in result_header({}, self._page(141, 100, "n"), 141, "dcim.device")
+        assert "WARNING" not in result_header({"tenant_id": 14}, self._page(12, 12), 141, "dcim.device")
+        assert "WARNING" not in result_header({"tenant_id": 99}, self._page(0, 0), 141, "dcim.device")
+        # unknown total (probe failed, endpoint unknown): fail-open, counts still present
+        h = result_header({"tenant_id": 14}, self._page(141, 100, "n"), None, "dcim.device")
+        assert "WARNING" not in h and "matched_count=141" in h
+
+    def test_scope_excludes_view_level_keys(self):
+        from src.tools.netbox_tools import scope_filters
+        assert scope_filters({"filters": {"limit": 100, "fields": ["id"], "q": "x", "site_id": 3}}) == {"site_id": 3}
+        assert scope_filters({"filters": None}) == {} and scope_filters({}) == {}
+
+    def test_list_payload_prefers_artifact_and_fails_open(self):
+        from src.tools.netbox_tools import list_payload
+        page = self._page(1, 1)
+        assert list_payload([{"type": "text", "text": "garbage"}], {"structured_content": page}) == page
+        assert list_payload([{"type": "text", "text": '{"count": 2, "results": []}'}], None) == {"count": 2, "results": []}
+        assert list_payload([{"type": "text", "text": '{"dcim.site": []}'}], {"structured_content": {"dcim.site": []}}) is None
+        assert list_payload("not json", None) is None
+
+    def test_list_endpoint_from_index_and_changelogs(self):
+        from src.tools.netbox_tools import list_endpoint
+        assert list_endpoint("netbox_get_objects", {"object_type": "dcim.device"}) == "/api/dcim/devices/"
+        assert list_endpoint("netbox_get_objects", {"object_type": "nope.nope"}) is None
+        assert list_endpoint("netbox_get_changelogs", {"filters": {"user_id": 9}}) == "/api/core/object-changes/"
+
+    @pytest.mark.asyncio
+    async def test_totals_cache_seeded_and_ttl(self):
+        from src.tools.netbox_tools import UnfilteredTotals
+        t = UnfilteredTotals(ttl_s=3600)
+        t.seed("/api/dcim/devices/", 141)
+        assert await t.get("/api/dcim/devices/") == 141
+        calls = []
+
+        async def fake(endpoint):
+            calls.append(endpoint)
+            return 7
+        t._fetch = fake  # type: ignore[method-assign]
+        assert await t.get("/api/ipam/vlans/") == 7 and await t.get("/api/ipam/vlans/") == 7
+        assert calls == ["/api/ipam/vlans/"]          # second call served from cache
+        t.ttl_s = 0
+        assert await t.get("/api/ipam/vlans/") == 7 and len(calls) == 2   # expired -> refetched
+
+    @pytest.mark.asyncio
+    async def test_ignored_keys_probe_verdicts(self):
+        from src.tools.netbox_tools import UnfilteredTotals
+        t = UnfilteredTotals(ttl_s=3600)
+        probes = []
+
+        async def fake_get(endpoint, filters):
+            probes.append((endpoint, filters))
+            key = next(iter(filters))
+            return {"has_primary_ip": (200, 141),       # ignored: impossible value, unchanged total
+                    "role_id": (400, None),              # honoured: NetBox rejects the impossible id
+                    "device_type_id": (200, 0),          # honoured: impossible id matches nothing
+                    "broken": (None, None)}[key]         # probe failed
+        t._get = fake_get  # type: ignore[method-assign]
+        ep = "/api/dcim/devices/"
+        assert await t.ignored_keys(ep, {"has_primary_ip": "no", "role_id": 5}, 141) == ["has_primary_ip"]
+        assert await t.ignored_keys(ep, {"device_type_id": [8, 9]}, 141) == []
+        assert probes[-1] == (ep, {"device_type_id": [999999999]})          # list keeps list shape
+        assert probes[0] == (ep, {"has_primary_ip": "zz-no-such-value-zz"})  # string value -> string nonsense
+        assert await t.ignored_keys(ep, {"broken": 1}, 141) is None
+        n = len(probes)
+        assert await t.ignored_keys(ep, {"has_primary_ip": "false"}, 141) == ["has_primary_ip"] and len(probes) == n  # cached
+
+    @pytest.mark.asyncio
+    async def test_wrapper_warns_only_on_list_tools_with_whole_table(self):
+        from langchain_core.tools import StructuredTool
+        from src.tools.netbox_tools import NetBoxToolWrapper
+
+        page = self._page(141, 100, "http://x/?offset=100")
+
+        async def devices(object_type: str, filters: dict | None = None, limit: int = 5):
+            return [{"type": "text", "text": json.dumps(page)}], {"structured_content": page}
+
+        async def search(query: str, object_types: list | None = None):
+            return [{"type": "text", "text": '{"dcim.site": []}'}], {"structured_content": {"dcim.site": []}}
+
+        w = NetBoxToolWrapper(mcp_client=None)
+        w.totals.seed("/api/dcim/devices/", 141)
+
+        async def fake_get(endpoint, filters):
+            return (200, 141)                      # every probe: unchanged total -> ignored
+        w.totals._get = fake_get  # type: ignore[method-assign]
+        get = w._wrap_tool_with_validation(StructuredTool.from_function(
+            coroutine=devices, name="netbox_get_objects", description="x", response_format="content_and_artifact"))
+        find = w._wrap_tool_with_validation(StructuredTool.from_function(
+            coroutine=search, name="netbox_search_objects", description="x", response_format="content_and_artifact"))
+
+        msg = await get.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "filters": {"has_primary_ip": "no"}, "limit": 100}, "id": "c1", "type": "tool_call"})
+        head = msg.content[0]["text"]
+        assert head.startswith('NETBOX_RESULT scope={"has_primary_ip":"no"} matched_count=141 returned_count=100 complete=false')
+        assert "INCOMPLETE: 100 of 141" in head and "WARNING: filter(s) has_primary_ip had NO EFFECT" in head
+        assert msg.artifact == {"structured_content": page}
+        # same payload, no scope: counts only, no warning
+        msg = await get.ainvoke({"name": "netbox_get_objects", "args": {"object_type": "dcim.device", "limit": 100}, "id": "c2", "type": "tool_call"})
+        assert "WARNING" not in msg.content[0]["text"] and "matched_count=141" in msg.content[0]["text"]
+        # the search tool has no paginated payload: untouched
+        msg = await find.ainvoke({"name": "netbox_search_objects", "args": {"query": "hvl"}, "id": "c3", "type": "tool_call"})
+        assert msg.content == [{"type": "text", "text": '{"dcim.site": []}'}]

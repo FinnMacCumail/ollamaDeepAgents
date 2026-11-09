@@ -18,6 +18,31 @@ This skill provides essential knowledge about NetBox MCP server filter limitatio
 > the **`netbox-graphql`** skill. The MCP patterns here are also the right choice for fuzzy
 > search and pagination.
 
+## READ THE RESULT HEADER FIRST
+
+Every `netbox_get_objects` / `netbox_get_changelogs` result begins with a header line that
+the wrapper computed from the response, before the raw JSON:
+
+```
+NETBOX_RESULT scope={"tenant_id":14,"role":"pdu"} matched_count=12 returned_count=12 complete=true
+```
+
+- `scope` is the set of filters that were actually sent (after normalisation). If a key you
+  meant to send is missing here, it was never applied.
+- `matched_count` is NetBox's `count` (all pages); `returned_count` is the rows in THIS page.
+- `complete=false` is followed by an `INCOMPLETE:` line naming the next `offset` to fetch.
+- When a filtered call returns EXACTLY the endpoint's unfiltered total, the wrapper re-sends
+  each filter key alone with an impossible value to find out whether NetBox honours it:
+  - `WARNING: filter(s) X had NO EFFECT` names the keys NetBox ignores on that endpoint
+    (it silently drops any key or value form it does not honour and answers 200 with the
+    whole table). The rows are UNFILTERED: do not use them; fix the key name or value form
+    using this skill and re-query.
+  - `NOTE: the filters are honoured and happen to match every ...` means the filters work
+    and the population really is the whole table (e.g. all outlet templates belong to one
+    device type). Use the result; do not re-query.
+  - The older wording `WARNING: the filters had no effect or coincide ...` appears only when
+    the probe could not run; then check the filter form yourself before trusting the rows.
+
 ## HANDLING PAGINATED RESPONSES
 
 NetBox returns paginated results. A response shaped like this is INCOMPLETE:
@@ -43,7 +68,8 @@ When `next` is non-null, you have only seen part of the data. You MUST do one of
    the user clearly asked for a sample, or if N is large enough to be useful as-is.
 
 NEVER silently ignore a non-null `next`. Returning 5 of 14 sites without flagging it is a
-correctness failure.
+correctness failure. The header's `complete=false` / `INCOMPLETE:` line is this check done
+for you: act on it.
 
 ```python
 # Pagination loop pattern (works for any count)
