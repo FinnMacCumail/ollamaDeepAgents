@@ -3,7 +3,9 @@
 import difflib
 import gzip
 import json
+import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -443,12 +445,224 @@ class FilterValidator:
         )
 
 
+# ---------------------------------------------------------------------------
+# Result envelope (2026-11-09). NetBox's one failure nothing downstream can see
+# is HTTP 200 with the whole table: a filter whose NAME is valid but whose VALUE
+# NetBox drops (the JSON-null bug hid two full runs behind "141 devices"), a
+# filter the schema does not know (custom fields, a future release), or a
+# wrong name on an instance whose index is stale. The schema layer above cannot
+# catch any of those. So every list result now starts with a header the model
+# reads before the rows: the scope actually sent, NetBox's `count`, the rows in
+# this page, whether `next` is null, and a WARNING when a scoped call returned
+# exactly the endpoint's unfiltered total. That total comes from one `limit=1`
+# GET per endpoint, cached per agent start, so the detector costs nothing per
+# call. Replayed over the recorded benchmark calls (see
+# docs/development/2026-11-09_result-envelope.md) before shipping. A filter can
+# legitimately match everything (all 8 outlet templates on one device type), and
+# the first session ladder showed the model treating such a warning as "filter
+# broken" and thrashing, so on a hit each scoped key is re-sent alone with an
+# impossible value (the research's own ground-truth method): a honoured key
+# answers 400 or fewer, an ignored key answers the unchanged total. The WARNING
+# names the ignored keys; a true coincidence gets a NOTE instead. Fail-open
+# throughout: no payload, no endpoint, no total -> no warning, and the header
+# still carries the counts; no probe -> the ambiguous wording.
+_ENVELOPE_TOOLS: frozenset[str] = frozenset({"netbox_get_objects", "netbox_get_changelogs"})
+_CHANGELOG_ENDPOINT = "/api/core/object-changes/"
+_TOTALS_TTL_S = 600.0
+
+
+class UnfilteredTotals:
+    """Per-endpoint unfiltered `count`, fetched lazily with `?limit=1` and cached."""
+
+    def __init__(self, ttl_s: float = _TOTALS_TTL_S):
+        self.ttl_s = ttl_s
+        self._cache: dict[str, tuple[int | None, float]] = {}
+        self._verdicts: dict[str, tuple[str, float]] = {}
+
+    def seed(self, endpoint: str, total: int | None) -> None:
+        self._cache[endpoint] = (total, time.monotonic())
+
+    async def get(self, endpoint: str) -> int | None:
+        hit = self._cache.get(endpoint)
+        if hit and time.monotonic() - hit[1] < self.ttl_s:
+            return hit[0]
+        total = await self._fetch(endpoint)
+        self.seed(endpoint, total)
+        return total
+
+    async def ignored_keys(self, endpoint: str, scope: dict[str, Any], total: int) -> list[str] | None:
+        """Which scoped keys NetBox ignores on this endpoint, decided the way the
+        2026-10-20 research ground-truthed its replay: re-send each key alone with
+        an impossible value. A honoured key answers 400 or fewer than `total`; an
+        ignored key answers the unchanged total. One GET per key, verdict cached.
+        None when a probe could not be made (the caller falls back to the
+        ambiguous wording)."""
+        ignored: list[str] = []
+        for key, value in scope.items():
+            verdict = await self._verdict(endpoint, key, value, total)
+            if verdict is None:
+                return None
+            if verdict == "ignored":
+                ignored.append(key)
+        return ignored
+
+    async def _verdict(self, endpoint: str, key: str, value: Any, total: int) -> str | None:
+        ck = f"{endpoint}|{key}"
+        hit = self._verdicts.get(ck)
+        if hit and time.monotonic() - hit[1] < self.ttl_s:
+            return hit[0]
+        sample = value[0] if isinstance(value, list) and value else value
+        nonsense: Any = 999999999 if isinstance(sample, int) or (isinstance(sample, str) and sample.isdigit()) else "zz-no-such-value-zz"
+        probe = {key: [nonsense] if isinstance(value, list) else nonsense}
+        status, count = await self._get(endpoint, probe)
+        if status is None:  # one retry: a transient timeout must not demote the verdict to "ambiguous"
+            status, count = await self._get(endpoint, probe)
+        if status is None:
+            return None
+        verdict = "honoured" if (status != 200 or (isinstance(count, int) and count < total)) else "ignored"
+        self._verdicts[ck] = (verdict, time.monotonic())
+        return verdict
+
+    @classmethod
+    async def _fetch(cls, endpoint: str) -> int | None:
+        status, count = await cls._get(endpoint, {})
+        return count if status == 200 else None
+
+    @staticmethod
+    async def _get(endpoint: str, filters: dict[str, Any]) -> tuple[int | None, int | None]:
+        """(http status, count) for `GET <endpoint>?limit=1&fields=id&<filters>`; (None, None) on failure."""
+        url = os.environ.get("NETBOX_URL")
+        token = os.environ.get("NETBOX_TOKEN")
+        if not url:
+            return None, None
+        try:
+            import httpx
+            params: list[tuple[str, Any]] = [("limit", 1), ("fields", "id")]
+            for k, v in filters.items():
+                params.extend((k, x) for x in v) if isinstance(v, list) else params.append((k, v))
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    url.rstrip("/") + endpoint,
+                    params=params,
+                    headers={"Authorization": f"Token {token}"} if token else {},
+                )
+            if resp.status_code != 200:
+                return resp.status_code, None
+            count = resp.json().get("count")
+            return 200, (int(count) if isinstance(count, int) else None)
+        except Exception as e:  # noqa: BLE001 - detector is advisory, never fatal
+            logger.debug("NetBox probe failed", endpoint=endpoint, filters=filters, error=str(e))
+            return None, None
+
+
+def list_endpoint(tool_name: str, kwargs: dict[str, Any]) -> str | None:
+    """API path of the list the tool queried, via the vendored index; None when unknown."""
+    if tool_name == "netbox_get_changelogs":
+        return _CHANGELOG_ENDPOINT
+    idx = load_filter_index()
+    object_type = kwargs.get("object_type")
+    if not idx or not object_type:
+        return None
+    return idx.get("object_types", {}).get(object_type)
+
+
+def scope_filters(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The filters that narrow the result (view-level keys such as limit/fields excluded)."""
+    f = kwargs.get("filters") or kwargs.get("filter") or {}
+    if not isinstance(f, dict):
+        return {}
+    return {k: v for k, v in f.items() if k not in _SCHEMA_EXEMPT_KEYS}
+
+
+def list_payload(content: Any, artifact: Any) -> dict | None:
+    """NetBox's paginated response ({count, next, previous, results}) from a tool
+    result, preferring the artifact's structured_content over re-parsing text."""
+    sc = artifact.get("structured_content") if isinstance(artifact, dict) else None
+    if isinstance(sc, dict) and "count" in sc:
+        return sc
+    texts: list[str] = []
+    if isinstance(content, str):
+        texts = [content]
+    elif isinstance(content, list):
+        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    for text in texts[:1]:
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(data, dict) and "count" in data:
+            return data
+    return None
+
+
+def result_header(
+    scope: dict[str, Any],
+    payload: dict,
+    unfiltered_total: int | None,
+    label: str,
+    offset: int = 0,
+    ignored: list[str] | None = None,
+) -> str:
+    """The text the model reads before the rows. One line always; an INCOMPLETE
+    line when `next` is set; when a scoped call returned the endpoint's whole
+    table, a WARNING naming the keys the probe showed to be ignored, a NOTE when
+    every key was shown to be honoured (a true coincidence), or the ambiguous
+    WARNING when no probe verdict is available (`ignored` is None)."""
+    count = payload.get("count")
+    results = payload.get("results")
+    returned = len(results) if isinstance(results, list) else 0
+    complete = payload.get("next") is None
+    lines = [
+        f"NETBOX_RESULT scope={json.dumps(scope, separators=(',', ':'), default=str)} "
+        f"matched_count={count} returned_count={returned} complete={'true' if complete else 'false'}"
+    ]
+    if not complete:
+        lines.append(
+            f"INCOMPLETE: {returned} of {count} returned. Fetch the rest with "
+            f"offset={offset + returned} (limit=100), or raise limit; do not report a partial list as the total."
+        )
+    if scope and unfiltered_total is not None and isinstance(count, int) and count > 0 and count >= unfiltered_total:
+        if ignored:
+            lines.append(
+                f"WARNING: filter(s) {', '.join(ignored)} had NO EFFECT: NetBox ignores them on {label} "
+                f"(a probe with an impossible value still returned all {unfiltered_total}). These rows are "
+                f"the UNFILTERED table, not the answer. Re-check the key names and value forms in the "
+                f"netbox-mcp-filters skill and re-query."
+            )
+        elif ignored is not None:
+            lines.append(
+                f"NOTE: the filters are honoured and happen to match every {label} ({count} of "
+                f"{unfiltered_total}); this result is usable as the answer."
+            )
+        else:
+            lines.append(
+                f"WARNING: the filters had no effect or coincide with the whole table: matched_count {count} "
+                f"equals the unfiltered total of {label} ({unfiltered_total}). A filter name or value NetBox "
+                f"does not honour is silently dropped and returns everything. Check each key and value against "
+                f"the netbox-mcp-filters skill and re-query in a different form, or confirm that every "
+                f"{label} really matches before using this result as the answer."
+            )
+    return "\n".join(lines)
+
+
+def with_header(result: tuple[Any, Any], header: str) -> tuple[Any, Any]:
+    """Prepend the header as the first content block; the artifact is untouched."""
+    content, artifact = result
+    block = {"type": "text", "text": header}
+    if isinstance(content, list):
+        return [block, *content], artifact
+    if isinstance(content, str):
+        return f"{header}\n{content}", artifact
+    return result
+
+
 class NetBoxToolWrapper:
     """Wrapper for NetBox MCP tools with validation and error handling."""
 
     def __init__(self, mcp_client: MultiServerMCPClient):
         self.mcp_client = mcp_client
         self.validator = FilterValidator()
+        self.totals = UnfilteredTotals()
 
     async def get_tools(self) -> list[Tool]:
         """Get wrapped NetBox tools with validation."""
@@ -491,6 +705,29 @@ class NetBoxToolWrapper:
             logger.warning(warning)
         else:
             logger.info("NetBox filter index matches the running instance", version=live)
+
+    async def _envelope(self, tool_name: str, kwargs: dict[str, Any], result: tuple[Any, Any]) -> tuple[Any, Any]:
+        """Prepend the result header to a list tool's content. Fail-open: any
+        result whose payload is not NetBox's paginated shape passes through."""
+        payload = list_payload(*result)
+        if payload is None:
+            return result
+        scope = scope_filters(kwargs)
+        endpoint = list_endpoint(tool_name, kwargs)
+        label = "core.objectchange" if tool_name == "netbox_get_changelogs" else str(kwargs.get("object_type") or "object")
+        total = await self.totals.get(endpoint) if (scope and endpoint) else None
+        count = payload.get("count")
+        ignored: list[str] | None = None
+        if total is not None and isinstance(count, int) and count > 0 and count >= total:
+            ignored = await self.totals.ignored_keys(endpoint, scope, total)
+            logger.warning(
+                "Scoped call returned the endpoint's whole table",
+                tool=tool_name, endpoint=endpoint, scope=scope, count=count, total=total,
+                ignored_keys=ignored if ignored is not None else "probe unavailable",
+            )
+        offset = kwargs.get("offset")
+        header = result_header(scope, payload, total, label, offset=offset if isinstance(offset, int) else 0, ignored=ignored)
+        return with_header(result, header)
 
     def _wrap_tool_with_validation(self, tool: Tool) -> Tool:
         """Wrap a tool with filter validation logic."""
@@ -567,11 +804,14 @@ class NetBoxToolWrapper:
                 result = await original_func(*args, **kwargs)
                 logger.debug(f"Tool {tool.name} executed successfully", kwargs=kwargs)
                 # langchain_mcp_adapters tools are content_and_artifact: they return
-                # (content_blocks, artifact). Pass the pair through unchanged so only
-                # the content reaches the model (see response_format below).
-                if isinstance(result, tuple) and len(result) == 2:
-                    return result
-                return result, None
+                # (content_blocks, artifact). Pass the pair through so only the
+                # content reaches the model (see response_format below), with the
+                # result header prepended on list tools.
+                if not (isinstance(result, tuple) and len(result) == 2):
+                    result = (result, None)
+                if tool.name in _ENVELOPE_TOOLS:
+                    result = await self._envelope(tool.name, kwargs, result)
+                return result
             except ToolException as e:
                 # MCP-layer ToolException (typically a NetBox API 400/404/500
                 # wrapped by langchain_mcp_adapters). Convert to a structured
