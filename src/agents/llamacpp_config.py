@@ -30,8 +30,51 @@ class LlamaCppChatOpenAI(ChatOpenAI):
             chunk, default_chunk_class, base_generation_info
         )
         if gen is not None and isinstance(chunk, dict) and chunk.get("timings"):
-            gen.message.response_metadata["timings"] = chunk["timings"]
+            timings = chunk["timings"]
+            gen.message.response_metadata["timings"] = timings
+            # Some llama.cpp-derived servers (Strata) report
+            # usage.prompt_tokens_details.cached_tokens = 0 even when the prefix was
+            # reused; timings.cache_n carries the real count. Fall back to it so the
+            # ledger's cache_read column is not zero on every call.
+            um = gen.message.usage_metadata
+            cache_n = timings.get("cache_n")
+            if um is not None and cache_n:
+                details = um.get("input_token_details") or {}
+                if not details.get("cache_read"):
+                    details = {**details, "cache_read": int(cache_n)}
+                    um["input_token_details"] = details
         return gen
+
+    def _create_chat_result(self, response: Any, generation_info: dict | None = None) -> Any:
+        """Non-streaming twin of the override above (CLI and the eval harness).
+
+        llama-server and Strata put the same `timings` object at the top level of the
+        non-streaming body. openai's response model keeps unknown fields in `model_extra`;
+        copy them into response_metadata so LangSmith runs carry prompt_ms/predicted_ms and
+        queue wait can be separated from compute after the fact.
+        """
+        result = super()._create_chat_result(response, generation_info)
+        timings = None
+        if isinstance(response, dict):
+            timings = response.get("timings")
+        else:
+            timings = (getattr(response, "model_extra", None) or {}).get("timings")
+        if timings and result.generations:
+            msg = result.generations[0].message
+            msg.response_metadata["timings"] = timings
+            um = getattr(msg, "usage_metadata", None)
+            cache_n = timings.get("cache_n")
+            if um is not None and cache_n:
+                details = um.get("input_token_details") or {}
+                if not details.get("cache_read"):
+                    um["input_token_details"] = {**details, "cache_read": int(cache_n)}
+        return result
+
+
+def _auth_headers() -> dict[str, str]:
+    """Bearer header for servers that require the API key on /models too (Strata)."""
+    key = os.getenv("LLAMACPP_API_KEY", "not-needed")
+    return {"Authorization": f"Bearer {key}"} if key and key != "not-needed" else {}
 
 
 def create_llamacpp_model(
@@ -207,7 +250,7 @@ def get_llamacpp_models() -> list[str]:
     base_url = os.getenv("LLAMACPP_BASE_URL", "http://localhost:58123/v1")
 
     try:
-        response = httpx.get(f"{base_url}/models", timeout=5.0)
+        response = httpx.get(f"{base_url}/models", timeout=5.0, headers=_auth_headers())
         response.raise_for_status()
         data = response.json()
 
@@ -242,7 +285,7 @@ def get_model_info(model_name: str | None = None) -> dict:
     base_url = os.getenv("LLAMACPP_BASE_URL", "http://localhost:58123/v1")
 
     try:
-        response = httpx.get(f"{base_url}/models", timeout=5.0)
+        response = httpx.get(f"{base_url}/models", timeout=5.0, headers=_auth_headers())
         response.raise_for_status()
         data = response.json()
 
@@ -287,7 +330,7 @@ class LlamaCppModelManager:
         import httpx
 
         try:
-            response = httpx.get(f"{self.base_url}/models", timeout=5.0)
+            response = httpx.get(f"{self.base_url}/models", timeout=5.0, headers=_auth_headers())
             response.raise_for_status()
             logger.info("llama.cpp server connection validated", base_url=self.base_url)
             return True

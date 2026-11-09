@@ -73,6 +73,25 @@ INFO: Creating llama.cpp model
 INFO: NetBox DeepAgent initialized - backend: llamacpp
 ```
 
+## Alternative server: Strata
+
+[Strata](https://github.com/Niko1221) is a closed, precompiled ggml/llama.cpp-derived server
+with an expert cache, KV streaming and speculative decoding. On plenum it serves the same
+Qwen3.8-Flash-Next UD-Q4_K_XL files on `0.0.0.0:8080` behind an API key, one slot, and it holds
+both GPUs, so llama-server cannot run at the same time. The agent needs only:
+
+```bash
+LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
+LLAMACPP_MODEL=qwen3.8-flash-next-UD-Q4_K_XL   # alias; Strata serves whichever model it loaded
+LLAMACPP_API_KEY=$(cat ~/.strata-api-key.plenum)
+```
+
+The key is required on every request including `GET /v1/models` and `GET /slots`; the app sends it
+as a Bearer token whenever `LLAMACPP_API_KEY` is anything other than `not-needed`. Strata reports
+`cached_tokens: 0` in `usage`; the app reads the real prefix-reuse count from `timings.cache_n`.
+On the full 90-question v5 benchmark Strata ran the agent 1.67× faster than llama-server at the
+same correctness (`docs/development/2026-11-08_strata-inference-server.md`).
+
 ## Switching Between Backends
 
 You can easily switch between Ollama and llama.cpp:

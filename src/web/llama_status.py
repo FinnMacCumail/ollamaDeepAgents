@@ -1,8 +1,15 @@
 """Probe llama-server's /health and /slots (both live OUTSIDE /v1)."""
 
+import os
 from typing import Any
 
 import httpx
+
+
+def _auth_headers() -> dict[str, str]:
+    """Strata requires the API key on /slots (llama-server does not); harmless otherwise."""
+    key = os.getenv("LLAMACPP_API_KEY", "not-needed")
+    return {"Authorization": f"Bearer {key}"} if key and key != "not-needed" else {}
 
 
 async def probe(base_url: str, timeout: float = 2.0) -> dict[str, Any]:
@@ -15,7 +22,7 @@ async def probe(base_url: str, timeout: float = 2.0) -> dict[str, Any]:
     }
     base = base_url.rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers=_auth_headers()) as client:
             health = await client.get(f"{base}/health")
             result["ok"] = health.status_code == 200 and health.json().get("status") == "ok"
             slots = await client.get(f"{base}/slots")
