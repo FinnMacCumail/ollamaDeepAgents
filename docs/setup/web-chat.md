@@ -13,6 +13,7 @@ Design and rationale: `PRPs/netbox-web-chat.md` and
 |----------------|-------|--------------------------------------------------|
 | NetBox         | 8000  | docker (unchanged)                               |
 | llama-server   | 58123 | `scripts/serve_qwen4exp.sh`                      |
+| (or Strata)    | 8080  | James's install; needs `LLAMACPP_API_KEY`, see `docs/setup/llamacpp.md` |
 | Web backend    | 8010  | `WEB_PORT` in `.env` (read by `src/web/config.py`) |
 | Web frontend   | 3010  | `frontend/nuxt.config.ts` (`devServer.port`) / `PORT` |
 
@@ -79,8 +80,9 @@ The backend's own process disables the blocking start-up model probe
 - **ctx / context gauge** — `input_tokens` of the turn's *last* model call, as reported by
   llama-server. This is the resident context. It is not an estimate; the in-process
   `count_tokens_approximately` undercounts ~19x and is not used anywhere.
-- **cached** — `prompt_tokens_details.cached_tokens`: prompt tokens served from llama-server's
-  prefix cache. High on a continued thread, ~0 after switching conversations.
+- **cached** — `prompt_tokens_details.cached_tokens`: prompt tokens served from the server's
+  prefix cache (Strata reports this as 0, so the app falls back to `timings.cache_n`). High on a
+  continued thread, ~0 after switching conversations.
 - **written** — `completion_tokens`, which *includes reasoning tokens*. "1 call, 8192 written,
   0 chars" is the output-budget failure; the UI shows it as an error, not an empty bubble.
 - **prefill / decode t/s** — llama.cpp `timings.prompt_per_second` / `predicted_per_second`,
@@ -117,7 +119,7 @@ The backend's own process disables the blocking start-up model probe
 
 | Symptom | Cause / fix |
 |---|---|
-| `/health` says `degraded` | llama-server down or on another port; check `LLAMACPP_BASE_URL` |
+| `/health` says `degraded` | llama-server down or on another port; check `LLAMACPP_BASE_URL`. On Strata, a missing or wrong `LLAMACPP_API_KEY` makes `/slots` answer 401 |
 | Tool calls return `TOOL_API_ERROR ... 403` | a `NETBOX_TOKEN` exported in the shell overrides `.env` and is inherited by the MCP subprocess |
 | Ledger shows zeros | `stream_usage` not set on the model; see `create_llamacpp_model()` |
 | `No streaming chunk received for 120.0s` error after a big tool result | langchain-openai's async streaming watchdog; llama-server is silent while it prefills a large prompt. Keep `LLAMACPP_STREAM_CHUNK_TIMEOUT_S=0` (default) or raise it well above your longest prefill |

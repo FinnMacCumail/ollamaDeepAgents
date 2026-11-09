@@ -13,6 +13,14 @@ This directory contains:
 
 ## Available Documents
 
+### [2026-11-08: Strata as the inference server — same weights, 1.67× the agent speed](2026-11-08_strata-inference-server.md)
+**Switched the llamacpp backend to James's Strata 0.2.10 (closed ggml/llama.cpp-derived server, `:8080`, API key, one slot) serving the same UD-Q4_K_XL files;** three additions in `llamacpp_config.py` / `llama_status.py` (Bearer header on the `/models` and `/slots` probes, `timings.cache_n` fallback for the cached column, `timings` kept on non-streaming calls so every LangSmith model call carries server-side compute time).
+**Key points:**
+- Full v5 (`...-v5-strata-full-00b39a92`, trace `docs/traces/2026-11-08_netbox-benchmark-v5_strata-full.md`): 90/90, agent time 14,396 → 8,603 s (1.67×), 33.9 → 19.2 s per model call, correctness 0.922 → 0.939, identical model-call count (412 vs 411); per-call timings show 21 s total queue wait, so no interference from the shared slot.
+- Wall was slower (5.3 → 5.9 h) only because the `gpt-oss:20b` judge ran on CPU — Strata leaves < 1 GB per GPU.
+- 8-question subset first (1.73×, 8/8); idle-box probes: prefill 937 vs 219–315 tok/s, decode equal on agent output; James's 33.6 tok/s was short prose.
+- llama-server cannot run beside Strata; `.env` switch documented, cloud-matrix re-run still owed.
+
 ### [2026-10-20: Schema-driven filter validation, implemented](2026-10-20_schema-validation-implemented.md)
 **Implementation of the research plan (steps 0–5, 7):** filter names and enum values are now checked against a vendored index of NetBox's OpenAPI schema (`scripts/build_netbox_filter_index.py` → `src/tools/netbox_filter_index.json.gz`); GraphQL documents are validated with `graphql.validate` against the introspected schema; JSON null is normalised to `"null"` on the wire (it was being dropped); `regex`/`iregex` and GraphQL `ordering` un-whitelisted.
 **Key points:**

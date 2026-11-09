@@ -7,7 +7,7 @@ strict filter constraints through automatic error recovery and progressive knowl
 Inference runs through one of two interchangeable backends (one-line `.env` switch):
 - **Ollama** — local models *and* Ollama Cloud frontier models (`:cloud`). Default:
   `deepseek-v4-flash:cloud`.
-- **llama.cpp** — OpenAI-compatible server for the fully-local / privacy-critical path.
+- **llama.cpp** — OpenAI-compatible server for the fully-local / privacy-critical path (llama-server, or a llama.cpp-derived server such as Strata; see `docs/setup/llamacpp.md`).
 
 ## 🎯 Key Features
 
