@@ -158,3 +158,37 @@ full v5 run.
 | 2026-10-20 tuple-fix | llama-server | 840 | 17 | 10 / 10 |
 | 2026-11-09 envelope, count-only | Strata | 827 | 39 | 7 / 10 |
 | 2026-11-09 envelope, probe | Strata | 837 | 24 | 10 / 10 |
+
+## Full v5 with the envelope (2026-11-10)
+
+`EVAL_MODELS=llamacpp:qwen3.8-flash-next-UD-Q4_K_XL EVAL_VARIANT=envelope-full
+EVAL_MAX_CONCURRENCY=1 ./venv/bin/python -m tests.eval.run_matrix_v5`, 2026-11-09 22:44 to
+2026-11-10 04:05 UTC, on the merged code (master `b33a8ce`). LangSmith
+`llamacpp-qwen3.8-flash-next-UD-Q4_K_XL-v5-envelope-full-ced8482f`; harness record
+`docs/traces/2026-11-10_netbox-benchmark-v5_envelope-full.md`. Compared with the 2026-11-08
+`...-v5-strata-full-00b39a92` run: same server, dataset, evaluators and judge (`gpt-oss:20b`),
+the envelope the only change.
+
+| run | correct | completeness | entity cov | agent s | model calls | tool calls | errors |
+|---|---|---|---|---|---|---|---|
+| 2026-11-08 strata-full | 0.939 | 0.972 | 0.908 | 8,603 | 412 | 400 | 0 |
+| 2026-11-10 envelope-full | **0.961** | 0.972 | 0.923 | **8,060** | **384** | **387** | 0 |
+
+Per tier: simple 0.983 -> 0.983 (tools 3.1 -> 2.93), medium 0.917 -> 0.967 (4.27 -> 3.97),
+advanced 0.917 -> 0.933 (5.97 -> 6.0). Five questions changed score: four up (two medium
+null-relation questions, "hypervisor hosts with no VMs" 0 -> 1 and "devices not at
+Dunder-Mifflin sites" 0.5 -> 1, and two advanced), one down ("Google Cloud clusters host
+VMs?" 1 -> 0.5, where both runs answered "no, 0 VMs on all 23 clusters" and only the judge
+differed). Judge noise on a 90-question set is about ±0.02, so the correctness gain is at the
+edge of significance; the 6 % fewer model calls and 3 % fewer tool calls are consistent with
+the model no longer re-querying to check counts it can now read in the header.
+
+**What the detector did.** 304 headers; 42 `INCOMPLETE:` lines (paginated results the model
+had to continue or raise `limit` on); 2 whole-table hits, both resolved by the probe to NOTE
+(`user_id=9` on change-logs, 3,543 of 3,543; `object_id=10` + `object_type` on
+contact-assignments, 3 of 3), exactly the two coincidences the replay predicted; **0 WARNINGs**
+(the model sent no silently-ignored key in this run) and 0 ambiguous headers. Three tool errors
+in the log were all the pre-existing pydantic `filters: Missing required argument` case (the
+model omitted `filters`), recovered on the next call. So this run measures "no harm plus the
+header's own value" again; the WARNING path is still proven only by the replay and live
+checks, because the benchmark model did not reproduce the dropped-value mistake tonight.
